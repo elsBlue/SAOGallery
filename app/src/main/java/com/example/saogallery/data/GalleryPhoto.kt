@@ -3,6 +3,7 @@ package com.example.saogallery.data
 import androidx.annotation.DrawableRes
 import android.media.ExifInterface
 import java.io.ByteArrayInputStream
+import java.io.InputStream
 import java.util.Calendar
 
 data class GalleryPhoto(
@@ -38,9 +39,9 @@ private val MONTHS = arrayOf(
     "July", "August", "September", "October", "November", "December",
 )
 
-fun captureMillis(bytes: ByteArray): Long {
+fun captureMillis(source: InputStream): Long {
     return try {
-        val exif = ExifInterface(ByteArrayInputStream(bytes))
+        val exif = ExifInterface(source)
         val raw = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)
             ?: exif.getAttribute(ExifInterface.TAG_DATETIME)
             ?: return 0L
@@ -54,3 +55,6 @@ fun captureMillis(bytes: ByteArray): Long {
         0L
     }
 }
+
+fun captureMillis(bytes: ByteArray): Long = captureMillis(ByteArrayInputStream(bytes))
+

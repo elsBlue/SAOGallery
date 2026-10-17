@@ -4,9 +4,10 @@ import android.app.Activity
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.view.WindowManager
 import android.widget.Toast
-import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -40,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -124,6 +126,8 @@ fun GalleryScreen(
     onDragEnd: (Float) -> Unit,
     onShowIndex: (Int) -> Unit,
     onImport: (List<String>, (ImportOutcome) -> Unit) -> Unit,
+    onNextDelete: () -> DeleteStep,
+    onCancelDelete: () -> Unit,
     onRename: (Int, String) -> Unit,
     onTrash: (Int) -> Unit,
     onRestore: (String) -> Unit,
@@ -156,15 +160,30 @@ fun GalleryScreen(
         controller.isAppearanceLightStatusBars = light
         controller.isAppearanceLightNavigationBars = light
     }
-
-    val deleteConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        val message = if (result.resultCode == Activity.RESULT_OK) {
-            "Encrypted inside Nyte Gallery and removed from your gallery"
-        } else {
-            "Saved in Nyte Gallery, but still visible in your other gallery until you allow the delete"
+    val host = LocalHostActivity.current
+    DisposableEffect(locked, host) {
+        val window = host?.window
+        if (window != null) {
+            if (locked) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            else window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
-        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        onDispose { host?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
     }
+
+    val chain = remember { arrayOfNulls<ActivityResultLauncher<IntentSenderRequest>>(1) }
+    val deleteConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            when (val step = onNextDelete()) {
+                is DeleteStep.Consent -> chain[0]?.launch(IntentSenderRequest.Builder(step.sender).build())
+                DeleteStep.Done -> Toast.makeText(context, "Encrypted inside Nyte Gallery and removed from your gallery", Toast.LENGTH_LONG).show()
+                DeleteStep.Failed -> Toast.makeText(context, "Saved in Nyte Gallery, but still visible in your other gallery", Toast.LENGTH_LONG).show()
+            }
+        } else {
+            onCancelDelete()
+            Toast.makeText(context, "Saved in Nyte Gallery. Any photo you did not confirm is still in your other gallery", Toast.LENGTH_LONG).show()
+        }
+    }
+    chain[0] = deleteConsent
     val photoAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
         if (granted.values.any { it }) choosingDevice = true
         else Toast.makeText(context, "Photo access is needed to move images out of your gallery", Toast.LENGTH_SHORT).show()
@@ -1012,8 +1031,7 @@ private fun PhotoImage(
         var bitmap by remember(photo.vaultFile) { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(photo.vaultFile) {
             bitmap = withContext(Dispatchers.IO) {
-                val bytes = VaultStore(context).read(photo) ?: return@withContext null
-                decodeScaled(bytes, maxEdge)?.asImageBitmap()
+                VaultStore(context).decode(photo, maxEdge)?.asImageBitmap()
             }
         }
         bitmap?.let {

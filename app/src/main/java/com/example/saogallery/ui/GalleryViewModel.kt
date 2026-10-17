@@ -45,12 +45,19 @@ data class ImportOutcome(
     val alreadyRemoved: Boolean,
 )
 
+sealed class DeleteStep {
+    data class Consent(val sender: IntentSender) : DeleteStep()
+    data object Done : DeleteStep()
+    data object Failed : DeleteStep()
+}
+
 class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private val vault = VaultStore(app)
     private val all = MutableStateFlow(vault.load())
     private val rotation = MutableStateFlow(0f)
     private var settleJob: Job? = null
     private var dragOrigin = 0f
+    private var deleteQueue: List<List<Uri>> = emptyList()
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -58,7 +65,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
             val next = all.value.map { photo ->
                 if (photo.takenAt > 0L || photo.vaultFile == null) photo
                 else {
-                    val millis = vault.read(photo)?.let { captureMillis(it) } ?: 0L
+                    val millis = vault.openPlain(photo)?.use { captureMillis(it) } ?: 0L
                     if (millis > 0L) {
                         changed = true
                         photo.copy(takenAt = millis)
@@ -180,8 +187,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val exported = withContext(Dispatchers.IO) {
                 targets.mapNotNull { photo ->
-                    val bytes = photoBytes(photo) ?: return@mapNotNull null
-                    if (writePublic(photo, bytes)) photo.id else null
+                    if (writePublic(photo)) photo.id else null
                 }.toSet()
             }
             if (exported.isNotEmpty()) {
@@ -198,20 +204,10 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun photoBytes(photo: GalleryPhoto): ByteArray? {
-        if (photo.vaultFile != null) return vault.read(photo)
-        if (photo.imageRes == 0) return null
-        val bitmap = BitmapFactory.decodeResource(getApplication<Application>().resources, photo.imageRes) ?: return null
-        return ByteArrayOutputStream().use { out ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
-            if (!bitmap.isRecycled) bitmap.recycle()
-            out.toByteArray()
-        }
-    }
-
-    private fun writePublic(photo: GalleryPhoto, bytes: ByteArray): Boolean {
+    private fun writePublic(photo: GalleryPhoto): Boolean {
+        val resolver = getApplication<Application>().contentResolver
+        var uri: Uri? = null
         return try {
-            val resolver = getApplication<Application>().contentResolver
             val safe = photo.name.replace(Regex("[^A-Za-z0-9 _-]"), "").trim().take(40).ifBlank { "Nyte" }
             val values = ContentValues().apply {
                 put(MediaStore.Images.Media.DISPLAY_NAME, "$safe-${photo.id.take(6)}.jpg")
@@ -221,16 +217,39 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                     put(MediaStore.Images.Media.IS_PENDING, 1)
                 }
             }
-            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
-            resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: return false
+            val created = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+            uri = created
+            val wrote = resolver.openOutputStream(created)?.use { out -> writePhoto(photo, out) } ?: false
+            if (!wrote) {
+                resolver.delete(created, null, null)
+                return false
+            }
             if (Build.VERSION.SDK_INT >= 29) {
                 values.clear()
                 values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
+                resolver.update(created, values, null, null)
             }
             true
         } catch (_: Exception) {
+            uri?.let { resolver.delete(it, null, null) }
             false
+        }
+    }
+
+    private fun writePhoto(photo: GalleryPhoto, out: java.io.OutputStream): Boolean {
+        if (photo.vaultFile != null) return vault.copyPlain(photo, out)
+        val bytes = bundledBytes(photo) ?: return false
+        out.write(bytes)
+        return true
+    }
+
+    private fun bundledBytes(photo: GalleryPhoto): ByteArray? {
+        if (photo.imageRes == 0) return null
+        val bitmap = BitmapFactory.decodeResource(getApplication<Application>().resources, photo.imageRes) ?: return null
+        return ByteArrayOutputStream().use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 92, stream)
+            if (!bitmap.isRecycled) bitmap.recycle()
+            stream.toByteArray()
         }
     }
 
@@ -239,36 +258,61 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         val start = visible().size
         viewModelScope.launch {
             val uris = uriStrings.map { Uri.parse(it) }
-            val added = withContext(Dispatchers.IO) {
+            val imported = withContext(Dispatchers.IO) {
                 val resolver = getApplication<Application>().contentResolver
                 uris.mapNotNull { uri ->
-                    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return@mapNotNull null
                     val rawName = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                         if (cursor.moveToFirst()) cursor.getString(0) else null
                     } ?: "Photo"
-                    val taken = captureMillis(bytes).takeIf { it > 0L } ?: System.currentTimeMillis()
-                    vault.import(rawName.substringBeforeLast('.'), bytes, UUID.randomUUID().toString(), taken)
+                    val taken = takenMillis(resolver, uri).takeIf { it > 0L } ?: System.currentTimeMillis()
+                    val photo = resolver.openInputStream(uri)?.use { input ->
+                        vault.importStream(rawName.substringBeforeLast('.'), input, UUID.randomUUID().toString(), taken)
+                    } ?: return@mapNotNull null
+                    uri to photo
                 }
             }
-            if (added.isEmpty()) {
+            if (imported.isEmpty()) {
                 onReady(ImportOutcome(null, 0, false))
                 return@launch
             }
-            all.value = all.value + added
+            all.value = all.value + imported.map { it.second }
             vault.save(all.value)
             showIndex(start)
-            val removal = withContext(Dispatchers.IO) { removeOriginals(uris) }
-            onReady(ImportOutcome(removal.first, added.size, removal.second))
+            val removal = withContext(Dispatchers.IO) { planRemoval(imported.map { it.first }) }
+            deleteQueue = removal.rest
+            onReady(ImportOutcome(removal.consent, imported.size, removal.alreadyRemoved))
         }
     }
 
-    private fun removeOriginals(uris: List<Uri>): Pair<IntentSender?, Boolean> {
+    private fun takenMillis(resolver: android.content.ContentResolver, uri: Uri): Long {
+        val stored = try {
+            resolver.query(uri, arrayOf(MediaStore.Images.Media.DATE_TAKEN), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else 0L
+            } ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
+        if (stored > 0L) return stored
+        return try {
+            resolver.openInputStream(uri)?.use { captureMillis(it) } ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun planRemoval(uris: List<Uri>): Removal {
+        if (uris.isEmpty()) return Removal(null, true)
         val resolver = getApplication<Application>().contentResolver
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val chunks = uris.chunked(DELETE_BATCH)
             return try {
-                MediaStore.createDeleteRequest(resolver, uris).intentSender to false
+                Removal(
+                    MediaStore.createDeleteRequest(resolver, chunks.first()).intentSender,
+                    false,
+                    chunks.drop(1),
+                )
             } catch (_: Exception) {
-                null to false
+                Removal(null, false)
             }
         }
         var removed = true
@@ -277,12 +321,36 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                 if (resolver.delete(uri, null, null) <= 0) removed = false
             } catch (error: SecurityException) {
                 if (Build.VERSION.SDK_INT >= 29) {
-                    recoverableSender(error)?.let { return it to false }
+                    recoverableSender(error)?.let { return Removal(it, false) }
                 }
                 removed = false
             }
         }
-        return null to removed
+        return Removal(null, removed)
+    }
+
+    fun nextDeleteStep(): DeleteStep {
+        val queue = deleteQueue
+        if (queue.isEmpty()) return DeleteStep.Done
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            deleteQueue = emptyList()
+            return DeleteStep.Failed
+        }
+        return try {
+            val sender = MediaStore.createDeleteRequest(
+                getApplication<Application>().contentResolver,
+                queue.first(),
+            ).intentSender
+            deleteQueue = queue.drop(1)
+            DeleteStep.Consent(sender)
+        } catch (_: Exception) {
+            deleteQueue = emptyList()
+            DeleteStep.Failed
+        }
+    }
+
+    fun clearDeleteQueue() {
+        deleteQueue = emptyList()
     }
 
     @RequiresApi(29)
@@ -295,13 +363,13 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         val start = visible().size
         viewModelScope.launch {
             val added = withContext(Dispatchers.IO) {
-                items.mapNotNull { (name, uri) ->
-                    val bytes = getApplication<Application>().contentResolver
-                        .openInputStream(Uri.parse(uri))
-                        ?.use { it.readBytes() }
-                        ?: return@mapNotNull null
-                    val taken = captureMillis(bytes).takeIf { it > 0L } ?: System.currentTimeMillis()
-                    vault.import(name, bytes, UUID.randomUUID().toString(), taken)
+                val resolver = getApplication<Application>().contentResolver
+                items.mapNotNull { (name, uriText) ->
+                    val uri = Uri.parse(uriText)
+                    val taken = takenMillis(resolver, uri).takeIf { it > 0L } ?: System.currentTimeMillis()
+                    resolver.openInputStream(uri)?.use { input ->
+                        vault.importStream(name, input, UUID.randomUUID().toString(), taken)
+                    }
                 }
             }
             if (added.isEmpty()) return@launch
@@ -347,15 +415,12 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val DEGREES_PER_PIXEL = 0.22f
+        const val DELETE_BATCH = 20
     }
 }
 
-fun decodeScaled(bytes: ByteArray, maxEdge: Int): android.graphics.Bitmap? {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-    var sample = 1
-    while (bounds.outWidth / sample > maxEdge || bounds.outHeight / sample > maxEdge) sample *= 2
-    val options = BitmapFactory.Options().apply { inSampleSize = sample }
-    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-}
+private data class Removal(
+    val consent: IntentSender?,
+    val alreadyRemoved: Boolean,
+    val rest: List<List<Uri>> = emptyList(),
+)
