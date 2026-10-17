@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -351,12 +352,21 @@ private fun Stage(
                         }
                     }
                 }
-                if (showActions) {
-                    Spacer(Modifier.height(14.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
-                        ActionChip(ink, onDelete) { TrashGlyph() }
-                        ActionChip(ink, onEdit) { PencilIcon(ink) }
-                    }
+            }
+        }
+        if (showActions && active != null) {
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                val cardWidth = maxWidth * 0.62f
+                val cardHeight = cardWidth * 1.32f
+                Row(
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = maxHeight / 2 + cardHeight / 2 * 1.04f - 8.dp + 14.dp)
+                        .zIndex(30f),
+                    horizontalArrangement = Arrangement.spacedBy(22.dp),
+                ) {
+                    ActionChip(ink, onDelete) { TrashGlyph() }
+                    ActionChip(ink, onEdit) { PencilIcon(ink) }
                 }
             }
         }
