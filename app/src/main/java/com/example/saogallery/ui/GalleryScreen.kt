@@ -62,7 +62,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import com.example.saogallery.data.GalleryPhoto
+import com.example.saogallery.data.VaultStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Canvas
@@ -75,6 +81,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.text.TextStyle
 import kotlin.math.abs
 import kotlin.math.cos
@@ -99,11 +107,17 @@ fun GalleryScreen(
     onShowIndex: (Int) -> Unit,
     onAdd: (List<Pair<String, String>>) -> Unit,
     onRename: (Int, String) -> Unit,
+    onTrash: (Int) -> Unit,
+    onRestore: (String) -> Unit,
+    trashExplained: () -> Boolean,
+    onTrashExplained: () -> Unit,
 ) {
     val context = LocalContext.current
     var light by remember { mutableStateOf(false) }
     var galleryOpen by remember { mutableStateOf(false) }
+    var trashOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
+    var explainingTrash by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     val view = LocalView.current
     androidx.compose.runtime.SideEffect {
@@ -124,6 +138,27 @@ fun GalleryScreen(
     }
     val openPicker = {
         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+    val openRename = {
+        val current = state.photos.getOrNull(state.activeIndex)
+        if (current != null) {
+            draft = current.name
+            editing = true
+        }
+    }
+    val requestTrash = {
+        if (state.photos.isNotEmpty()) {
+            if (trashExplained()) onTrash(state.activeIndex) else explainingTrash = true
+        }
+    }
+
+    BackHandler(enabled = editing || explainingTrash || trashOpen || galleryOpen) {
+        when {
+            editing -> editing = false
+            explainingTrash -> explainingTrash = false
+            trashOpen -> trashOpen = false
+            else -> galleryOpen = false
+        }
     }
 
     val bg = if (light) {
@@ -160,16 +195,22 @@ fun GalleryScreen(
                 Stage(
                     state = state,
                     light = light,
-                    compact = galleryOpen,
+                    compact = galleryOpen || trashOpen,
+                    showPencil = galleryOpen,
+                    showActions = !galleryOpen && !trashOpen,
                     ink = ink,
-                    onEdit = {
-                        val current = state.photos.getOrNull(state.activeIndex) ?: return@Stage
-                        draft = current.name
-                        editing = true
-                    },
+                    onEdit = openRename,
+                    onDelete = requestTrash,
                 )
             }
-            if (galleryOpen) {
+            if (trashOpen) {
+                TrashGrid(
+                    photos = state.trash,
+                    light = light,
+                    onRestore = onRestore,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+            } else if (galleryOpen) {
                 PhotoGrid(
                     photos = state.photos,
                     activeIndex = state.activeIndex,
@@ -191,18 +232,36 @@ fun GalleryScreen(
             onClick = { light = !light },
         ) { SunMoonIcon(light = light) }
 
-        ChromeButton(
-            container = chrome,
-            icon = chromeInk,
-            modifier = Modifier
+        Row(
+            Modifier
                 .align(Alignment.BottomEnd)
                 .windowInsetsPadding(WindowInsets.systemBars)
                 .padding(bottom = 12.dp, end = 12.dp),
-            onClick = {
-                if (!galleryOpen && state.photos.isEmpty()) openPicker()
-                galleryOpen = !galleryOpen
-            },
-        ) { GalleryGlyph() }
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (state.trash.isNotEmpty()) {
+                ChromeButton(
+                    container = chrome,
+                    icon = chromeInk,
+                    modifier = Modifier,
+                    onClick = {
+                        trashOpen = !trashOpen
+                        if (trashOpen) galleryOpen = false
+                    },
+                ) { TrashGlyph() }
+            }
+            ChromeButton(
+                container = chrome,
+                icon = chromeInk,
+                modifier = Modifier,
+                onClick = {
+                    trashOpen = false
+                    if (!galleryOpen && state.photos.isEmpty()) openPicker()
+                    galleryOpen = !galleryOpen
+                },
+            ) { GalleryGlyph() }
+        }
 
         if (editing) {
             RenameOverlay(
@@ -216,6 +275,19 @@ fun GalleryScreen(
                 },
             )
         }
+        if (explainingTrash) {
+            NoticeOverlay(
+                light = light,
+                title = "MASUK TRASH",
+                body = "Gambar ini masuk ke Trash. Trash menghapusnya otomatis setelah 30 hari. Sebelum itu, gambar bisa dikembalikan.",
+                onDismiss = { explainingTrash = false },
+                onConfirm = {
+                    onTrashExplained()
+                    explainingTrash = false
+                    onTrash(state.activeIndex)
+                },
+            )
+        }
     }
 }
 
@@ -224,8 +296,11 @@ private fun Stage(
     state: GalleryUiState,
     light: Boolean,
     compact: Boolean,
+    showPencil: Boolean,
+    showActions: Boolean,
     ink: Color,
     onEdit: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val active = state.photos.getOrNull(state.activeIndex)
     Box(Modifier.fillMaxSize()) {
@@ -247,30 +322,41 @@ private fun Stage(
                 .padding(top = 18.dp),
         )
         if (active != null) {
-            Row(
+            Column(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = if (compact) 8.dp else 88.dp, start = 56.dp, end = 56.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(bottom = if (compact) 8.dp else 78.dp, start = 56.dp, end = 56.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
-                    text = clipName(active.name, LABEL_LIMIT),
-                    color = ink,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(ink.copy(alpha = 0.1f))
-                        .clickable(onClick = onEdit),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    PencilIcon(ink)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = clipName(active.name, LABEL_LIMIT),
+                        color = ink,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (showPencil) {
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(ink.copy(alpha = 0.1f))
+                                .clickable(onClick = onEdit),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            PencilIcon(ink)
+                        }
+                    }
+                }
+                if (showActions) {
+                    Spacer(Modifier.height(14.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                        ActionChip(ink, onDelete) { TrashGlyph() }
+                        ActionChip(ink, onEdit) { PencilIcon(ink) }
+                    }
                 }
             }
         }
@@ -371,14 +457,13 @@ private fun PortraitWindow(
 
 @Composable
 private fun PhotoImage(photo: GalleryPhoto, modifier: Modifier) {
-    if (photo.imageUri != null) {
+    if (photo.vaultFile != null) {
         val context = LocalContext.current
-        var bitmap by remember(photo.imageUri) { mutableStateOf<ImageBitmap?>(null) }
-        LaunchedEffect(photo.imageUri) {
+        var bitmap by remember(photo.vaultFile) { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(photo.vaultFile) {
             bitmap = withContext(Dispatchers.IO) {
-                context.contentResolver.openInputStream(Uri.parse(photo.imageUri))?.use { stream ->
-                    BitmapFactory.decodeStream(stream)?.asImageBitmap()
-                }
+                val bytes = VaultStore(context).read(photo) ?: return@withContext null
+                decodeScaled(bytes, 1080)?.asImageBitmap()
             }
         }
         bitmap?.let {
@@ -443,6 +528,115 @@ private fun PhotoGrid(
 }
 
 @Composable
+private fun TrashGrid(
+    photos: List<GalleryPhoto>,
+    light: Boolean,
+    onRestore: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val ink = if (light) Color(0xFF2A2428) else Color.White
+    Column(modifier.background(if (light) Color(0xFFF7F4EF) else Color(0xFF0C0D11))) {
+        Text(
+            "Trash · terhapus otomatis setelah 30 hari",
+            color = ink.copy(alpha = 0.7f),
+            fontSize = 12.sp,
+            modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 4.dp),
+        )
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(4),
+            modifier = Modifier.fillMaxSize().padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            itemsIndexed(photos, key = { _, photo -> photo.id }) { _, photo ->
+                Box(
+                    Modifier
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFD9D3CC)),
+                ) {
+                    PhotoImage(photo, Modifier.fillMaxSize())
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(4.dp)
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.55f))
+                            .clickable { onRestore(photo.id) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        RestoreGlyph()
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionChip(ink: Color, onClick: () -> Unit, glyph: @Composable () -> Unit) {
+    Box(
+        Modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .background(ink.copy(alpha = 0.1f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides ink,
+        ) {
+            glyph()
+        }
+    }
+}
+
+@Composable
+private fun NoticeOverlay(
+    light: Boolean,
+    title: String,
+    body: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val panel = if (light) Color(0xFFF7F3EE) else Color(0xFF1C1E26)
+    val ink = if (light) Color(0xFF2A2428) else Color.White
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.56f)).clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 28.dp)
+                .fillMaxWidth()
+                .shadow(24.dp, RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(24.dp))
+                .background(panel)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                .padding(horizontal = 20.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(title, color = ink, fontSize = 13.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+            Text(body, color = ink.copy(alpha = 0.82f), fontSize = 15.sp, lineHeight = 21.sp)
+            Spacer(Modifier.height(18.dp))
+            Box(
+                Modifier
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(DotA)
+                    .clickable(onClick = onConfirm)
+                    .padding(horizontal = 18.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Masukkan ke Trash", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+@Composable
 private fun ChromeButton(
     container: Color,
     icon: Color,
@@ -466,22 +660,6 @@ private fun ChromeButton(
                 glyph()
             }
         }
-    }
-}
-
-@Composable
-private fun PencilIcon(color: Color) {
-    Canvas(Modifier.size(15.dp)) {
-        val stroke = Stroke(width = 1.7.dp.toPx(), cap = StrokeCap.Round)
-        drawLine(color, Offset(size.width * 0.22f, size.height * 0.78f), Offset(size.width * 0.72f, size.height * 0.22f), stroke.width, StrokeCap.Round)
-        drawLine(color, Offset(size.width * 0.62f, size.height * 0.16f), Offset(size.width * 0.84f, size.height * 0.34f), stroke.width, StrokeCap.Round)
-        val tip = Path().apply {
-            moveTo(size.width * 0.16f, size.height * 0.84f)
-            lineTo(size.width * 0.28f, size.height * 0.62f)
-            lineTo(size.width * 0.42f, size.height * 0.74f)
-            close()
-        }
-        drawPath(tip, color)
     }
 }
 
@@ -519,10 +697,16 @@ private fun RenameOverlay(
     onSave: () -> Unit,
 ) {
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    var field by remember(value) {
+        mutableStateOf(TextFieldValue(value, TextRange(value.length)))
+    }
+    LaunchedEffect(value) {
+        field = TextFieldValue(value, TextRange(value.length))
+        focus.requestFocus()
+    }
     val panel = if (light) Color(0xFFF7F3EE) else Color(0xFF1C1E26)
     val ink = if (light) Color(0xFF2A2428) else Color.White
-    val field = if (light) Color(0xFFFBF9F6) else Color(0xFF12141A)
+    val fieldColor = if (light) Color(0xFFFBF9F6) else Color(0xFF12141A)
     Box(
         Modifier
             .fillMaxSize()
@@ -562,8 +746,11 @@ private fun RenameOverlay(
             }
             Spacer(Modifier.height(16.dp))
             BasicTextField(
-                value = value,
-                onValueChange = onChange,
+                value = field,
+                onValueChange = {
+                    field = it
+                    onChange(it.text)
+                },
                 textStyle = TextStyle(color = ink, fontSize = 18.sp, fontWeight = FontWeight.Medium),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(DotA),
                 modifier = Modifier
@@ -571,7 +758,7 @@ private fun RenameOverlay(
                     .fillMaxWidth()
                     .height(112.dp)
                     .clip(RoundedCornerShape(16.dp))
-                    .background(field)
+                    .background(fieldColor)
                     .padding(14.dp),
             )
             Spacer(Modifier.height(16.dp))
@@ -596,33 +783,81 @@ private fun Dot(color: Color) {
 }
 
 @Composable
+private fun PencilIcon(color: Color) {
+    val path = remember {
+        PathParser().parsePathString(
+            "M3,17.25V21h3.75L17.81,9.94l-3.75,-3.75L3,17.25zM20.71,7.04c0.39,-0.39 0.39,-1.02 0,-1.41l-2.34,-2.34c-0.39,-0.39 -1.02,-0.39 -1.41,0l-1.83,1.83 3.75,3.75 1.83,-1.83z",
+        ).toPath()
+    }
+    Canvas(Modifier.size(16.dp)) {
+        withTransform({
+            scale(size.minDimension / 24f, size.minDimension / 24f, Offset.Zero)
+        }) {
+            drawPath(path, color)
+        }
+    }
+}
+
+@Composable
 private fun SunMoonIcon(light: Boolean) {
     val color = androidx.compose.material3.LocalContentColor.current
-    androidx.compose.foundation.Canvas(Modifier.size(22.dp)) {
+    Canvas(Modifier.size(22.dp)) {
+        val stroke = Stroke(width = 1.7.dp.toPx(), cap = StrokeCap.Round)
         if (!light) {
-            drawCircle(color, radius = size.minDimension * 0.22f, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
-            val r = size.minDimension / 2f
+            drawCircle(color, radius = size.minDimension * 0.18f, style = stroke)
+            val inner = size.minDimension * 0.30f
+            val outer = size.minDimension * 0.44f
             repeat(8) { i ->
                 val a = Math.toRadians(i * 45.0)
                 drawLine(
                     color,
-                    start = center + androidx.compose.ui.geometry.Offset((cos(a) * r * 0.48f).toFloat(), (sin(a) * r * 0.48f).toFloat()),
-                    end = center + androidx.compose.ui.geometry.Offset((cos(a) * r * 0.78f).toFloat(), (sin(a) * r * 0.78f).toFloat()),
-                    strokeWidth = 2.dp.toPx(),
+                    center + Offset((cos(a) * inner).toFloat(), (sin(a) * inner).toFloat()),
+                    center + Offset((cos(a) * outer).toFloat(), (sin(a) * outer).toFloat()),
+                    stroke.width,
+                    StrokeCap.Round,
                 )
             }
         } else {
-            drawCircle(
-                color,
-                radius = size.minDimension * 0.32f,
-                center = androidx.compose.ui.geometry.Offset(size.width * 0.42f, size.height * 0.5f),
-            )
-            drawCircle(
-                Color.Transparent,
-                radius = size.minDimension * 0.26f,
-                center = androidx.compose.ui.geometry.Offset(size.width * 0.62f, size.height * 0.38f),
-            )
+            val crescent = Path().apply {
+                fillType = PathFillType.EvenOdd
+                addOval(androidx.compose.ui.geometry.Rect(Offset(size.width * 0.18f, size.height * 0.12f), Size(size.width * 0.68f, size.height * 0.68f)))
+                addOval(androidx.compose.ui.geometry.Rect(Offset(size.width * 0.38f, size.height * 0.04f), Size(size.width * 0.60f, size.height * 0.60f)))
+            }
+            drawPath(crescent, color)
         }
+    }
+}
+
+@Composable
+private fun TrashGlyph() {
+    val color = androidx.compose.material3.LocalContentColor.current
+    Canvas(Modifier.size(18.dp)) {
+        val stroke = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+        drawLine(color, Offset(size.width * 0.16f, size.height * 0.24f), Offset(size.width * 0.84f, size.height * 0.24f), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.40f, size.height * 0.24f), Offset(size.width * 0.44f, size.height * 0.12f), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.60f, size.height * 0.24f), Offset(size.width * 0.56f, size.height * 0.12f), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.44f, size.height * 0.12f), Offset(size.width * 0.56f, size.height * 0.12f), stroke.width, StrokeCap.Round)
+        drawRoundRect(
+            color,
+            topLeft = Offset(size.width * 0.24f, size.height * 0.30f),
+            size = Size(size.width * 0.52f, size.height * 0.56f),
+            cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+            style = stroke,
+        )
+        drawLine(color, Offset(size.width * 0.40f, size.height * 0.40f), Offset(size.width * 0.40f, size.height * 0.74f), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.60f, size.height * 0.40f), Offset(size.width * 0.60f, size.height * 0.74f), stroke.width, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun RestoreGlyph() {
+    Canvas(Modifier.size(16.dp)) {
+        val color = Color.White
+        val stroke = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+        drawLine(color, Offset(size.width * 0.22f, size.height * 0.72f), Offset(size.width * 0.78f, size.height * 0.72f), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.50f, size.height * 0.22f), Offset(size.width * 0.50f, size.height * 0.62f), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.34f, size.height * 0.38f), Offset(size.width * 0.50f, size.height * 0.22f), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.66f, size.height * 0.38f), Offset(size.width * 0.50f, size.height * 0.22f), stroke.width, StrokeCap.Round)
     }
 }
 

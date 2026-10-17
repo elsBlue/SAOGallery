@@ -37,6 +37,10 @@ class MainActivity : ComponentActivity() {
                     onShowIndex = viewModel::showIndex,
                     onAdd = viewModel::addPicked,
                     onRename = viewModel::rename,
+                    onTrash = viewModel::moveToTrash,
+                    onRestore = viewModel::restore,
+                    trashExplained = viewModel::trashExplained,
+                    onTrashExplained = viewModel::markTrashExplained,
                 )
             }
         }

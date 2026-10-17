@@ -6,5 +6,6 @@ data class GalleryPhoto(
     val id: String,
     val name: String,
     @DrawableRes val imageRes: Int = 0,
-    val imageUri: String? = null,
+    val vaultFile: String? = null,
+    val trashedAt: Long? = null,
 )
