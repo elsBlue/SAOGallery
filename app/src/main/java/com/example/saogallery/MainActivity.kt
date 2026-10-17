@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
                     onDragEnd = viewModel::onDragEnd,
                     onShowIndex = viewModel::showIndex,
                     onAdd = viewModel::addPicked,
+                    onRename = viewModel::rename,
                 )
             }
         }

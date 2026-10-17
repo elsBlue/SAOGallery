@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 data class GalleryUiState(
@@ -26,6 +27,7 @@ class GalleryViewModel : ViewModel() {
     private val photos = MutableStateFlow(GalleryRepository.photos)
     private val rotation = MutableStateFlow(0f)
     private var settleJob: Job? = null
+    private var dragOrigin = 0f
 
     val uiState: StateFlow<GalleryUiState> = combine(photos, rotation) { list, angle ->
         GalleryUiState(
@@ -41,32 +43,51 @@ class GalleryViewModel : ViewModel() {
 
     fun onDragStart() {
         settleJob?.cancel()
+        dragOrigin = rotation.value
     }
 
     fun onDrag(deltaPx: Float) {
-        if (photos.value.isEmpty()) return
+        val count = photos.value.size
+        if (count == 0) return
         settleJob?.cancel()
-        rotation.value -= deltaPx * DEGREES_PER_PIXEL
+        val step = 360f / count
+        val next = rotation.value - deltaPx * DEGREES_PER_PIXEL
+        rotation.value = next.coerceIn(dragOrigin - step, dragOrigin + step)
     }
 
     fun onDragEnd(velocityPx: Float) {
         val count = photos.value.size
         if (count == 0) return
         val step = 360f / count
-        val projected = rotation.value - velocityPx * FLING_SCALE
-        animateTo((projected / step).roundToInt() * step)
+        val delta = rotation.value - dragOrigin
+        val nudged = abs(delta) > step * 0.28f
+        val flicked = abs(delta) > step * 0.12f && abs(velocityPx) > 900f
+        val steps = when {
+            nudged -> if (delta > 0f) 1 else -1
+            flicked -> if (velocityPx < 0f) 1 else -1
+            else -> 0
+        }
+        animateTo(dragOrigin + steps * step)
     }
 
     fun showIndex(index: Int) {
         val count = photos.value.size
         if (count == 0) return
         val step = 360f / count
-        val current = rotation.value
-        val currentMod = ((current % 360f) + 360f) % 360f
-        var delta = index * step - currentMod
-        if (delta > 180f) delta -= 360f
-        if (delta < -180f) delta += 360f
-        animateTo(current + delta)
+        val currentIndex = activeIndexFor(rotation.value, count)
+        var delta = index - currentIndex
+        if (delta > count / 2) delta -= count
+        if (delta < -count / 2) delta += count
+        if (abs(delta) <= 1) animateTo(rotation.value + delta * step)
+        else rotation.value = index * step
+    }
+
+    fun rename(index: Int, name: String) {
+        val clean = name.trim()
+        if (clean.isEmpty() || index !in photos.value.indices) return
+        photos.value = photos.value.mapIndexed { i, photo ->
+            if (i == index) photo.copy(name = clean) else photo
+        }
     }
 
     fun addPicked(items: List<Pair<String, String>>) {
@@ -106,6 +127,5 @@ class GalleryViewModel : ViewModel() {
 
     private companion object {
         const val DEGREES_PER_PIXEL = 0.22f
-        const val FLING_SCALE = 0.045f
     }
 }

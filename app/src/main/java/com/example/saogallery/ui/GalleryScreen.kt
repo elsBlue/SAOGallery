@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,8 +65,20 @@ import androidx.core.view.WindowCompat
 import com.example.saogallery.data.GalleryPhoto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.TextStyle
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private val Paper = Color(0xFFF7F3EE)
@@ -85,10 +98,13 @@ fun GalleryScreen(
     onDragEnd: (Float) -> Unit,
     onShowIndex: (Int) -> Unit,
     onAdd: (List<Pair<String, String>>) -> Unit,
+    onRename: (Int, String) -> Unit,
 ) {
     val context = LocalContext.current
     var light by remember { mutableStateOf(false) }
     var galleryOpen by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    var draft by remember { mutableStateOf("") }
     val view = LocalView.current
     androidx.compose.runtime.SideEffect {
         val window = (view.context as Activity).window
@@ -146,6 +162,11 @@ fun GalleryScreen(
                     light = light,
                     compact = galleryOpen,
                     ink = ink,
+                    onEdit = {
+                        val current = state.photos.getOrNull(state.activeIndex) ?: return@Stage
+                        draft = current.name
+                        editing = true
+                    },
                 )
             }
             if (galleryOpen) {
@@ -182,6 +203,19 @@ fun GalleryScreen(
                 galleryOpen = !galleryOpen
             },
         ) { GalleryGlyph() }
+
+        if (editing) {
+            RenameOverlay(
+                light = light,
+                value = draft,
+                onChange = { draft = it },
+                onDismiss = { editing = false },
+                onSave = {
+                    onRename(state.activeIndex, draft)
+                    editing = false
+                },
+            )
+        }
     }
 }
 
@@ -191,6 +225,7 @@ private fun Stage(
     light: Boolean,
     compact: Boolean,
     ink: Color,
+    onEdit: () -> Unit,
 ) {
     val active = state.photos.getOrNull(state.activeIndex)
     Box(Modifier.fillMaxSize()) {
@@ -201,7 +236,7 @@ private fun Stage(
             activeIndex = state.activeIndex,
         )
         Text(
-            text = "SAO GALLERY",
+            text = "NYTE GALLERY",
             color = if (light) Color(0xFF5C463F) else Color(0xFFF3ECE8),
             fontSize = 13.sp,
             letterSpacing = 4.sp,
@@ -212,15 +247,32 @@ private fun Stage(
                 .padding(top = 18.dp),
         )
         if (active != null) {
-            Text(
-                text = clipName(active.name, LABEL_LIMIT),
-                color = ink,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
+            Row(
+                Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = if (compact) 8.dp else 88.dp, start = 72.dp, end = 72.dp),
-            )
+                    .padding(bottom = if (compact) 8.dp else 88.dp, start = 56.dp, end = 56.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = clipName(active.name, LABEL_LIMIT),
+                    color = ink,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(CircleShape)
+                        .background(ink.copy(alpha = 0.1f))
+                        .clickable(onClick = onEdit),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    PencilIcon(ink)
+                }
+            }
         }
     }
 }
@@ -237,9 +289,23 @@ private fun BoxWithConstraintsFill(
         val cardWidth = maxWidth * if (compact) 0.42f else 0.62f
         val cardHeight = cardWidth * 1.32f
         val radiusPx = with(density) { (maxWidth * if (compact) 0.34f else 0.52f).toPx() }
-        val step = if (photos.isEmpty()) 360f else 360f / photos.size
-        photos.forEachIndexed { index, photo ->
-            val rel = wrapDegrees(index * step - rotation)
+        val count = photos.size
+        if (count == 0) return@BoxWithConstraints
+        val center = rotation / (360f / count)
+        val focus = Math.floorMod(center.roundToInt(), count)
+        val offsets = when (count) {
+            1 -> listOf(0)
+            2 -> listOf(-1, 0)
+            else -> listOf(-1, 0, 1)
+        }
+        offsets.forEach { offset ->
+            val index = Math.floorMod(focus + offset, count)
+            val photo = photos[index]
+            var delta = index - center
+            delta %= count
+            if (delta > count / 2f) delta -= count
+            if (delta < -count / 2f) delta += count
+            val rel = delta * 58f
             val rad = Math.toRadians(rel.toDouble())
             val depth = cos(rad).toFloat()
             val scale = 0.62f + ((depth + 1f) / 2f) * 0.5f
@@ -247,7 +313,6 @@ private fun BoxWithConstraintsFill(
             val boost = if (index == activeIndex) 1.04f else 1f
             PortraitWindow(
                 photo = photo,
-                focused = index == activeIndex,
                 modifier = Modifier
                     .align(Alignment.Center)
                     .zIndex(depth)
@@ -272,7 +337,6 @@ private fun BoxWithConstraintsFill(
 @Composable
 private fun PortraitWindow(
     photo: GalleryPhoto,
-    focused: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -301,18 +365,6 @@ private fun PortraitWindow(
         }
         Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFFD9D3CC))) {
             PhotoImage(photo, Modifier.fillMaxSize())
-            if (focused) {
-                Box(
-                    Modifier
-                        .align(Alignment.Center)
-                        .size(54.dp)
-                        .graphicsLayer { }
-                        .clip(CircleShape)
-                        .background(Color.Transparent),
-                ) {
-                    PlayBadge()
-                }
-            }
         }
     }
 }
@@ -418,23 +470,129 @@ private fun ChromeButton(
 }
 
 @Composable
-private fun Dot(color: Color) {
-    Box(Modifier.size(9.dp).background(color, CircleShape))
+private fun PencilIcon(color: Color) {
+    Canvas(Modifier.size(15.dp)) {
+        val stroke = Stroke(width = 1.7.dp.toPx(), cap = StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.22f, size.height * 0.78f), Offset(size.width * 0.72f, size.height * 0.22f), stroke.width, StrokeCap.Round)
+        drawLine(color, Offset(size.width * 0.62f, size.height * 0.16f), Offset(size.width * 0.84f, size.height * 0.34f), stroke.width, StrokeCap.Round)
+        val tip = Path().apply {
+            moveTo(size.width * 0.16f, size.height * 0.84f)
+            lineTo(size.width * 0.28f, size.height * 0.62f)
+            lineTo(size.width * 0.42f, size.height * 0.74f)
+            close()
+        }
+        drawPath(tip, color)
+    }
 }
 
 @Composable
-private fun PlayBadge() {
-    androidx.compose.foundation.Canvas(Modifier.size(54.dp)) {
-        drawCircle(color = Color.White.copy(alpha = 0.92f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
-        val path = androidx.compose.ui.graphics.Path().apply {
-            val inset = size.minDimension * 0.34f
-            moveTo(size.width * 0.4f, inset)
-            lineTo(size.width * 0.4f, size.height - inset)
-            lineTo(size.width - inset * 0.7f, size.height / 2f)
-            close()
-        }
-        drawPath(path, Color.White.copy(alpha = 0.95f))
+private fun SaveIcon(color: Color) {
+    Canvas(Modifier.size(22.dp)) {
+        drawRoundRect(
+            color,
+            topLeft = Offset(size.width * 0.16f, size.height * 0.14f),
+            size = Size(size.width * 0.68f, size.height * 0.72f),
+            cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx()),
+            style = Stroke(width = 1.8.dp.toPx()),
+        )
+        drawRect(
+            color,
+            topLeft = Offset(size.width * 0.34f, size.height * 0.14f),
+            size = Size(size.width * 0.32f, size.height * 0.22f),
+        )
+        drawLine(
+            color,
+            Offset(size.width * 0.3f, size.height * 0.68f),
+            Offset(size.width * 0.7f, size.height * 0.68f),
+            strokeWidth = 1.8.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
     }
+}
+
+@Composable
+private fun RenameOverlay(
+    light: Boolean,
+    value: String,
+    onChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onSave: () -> Unit,
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    val panel = if (light) Color(0xFFF7F3EE) else Color(0xFF1C1E26)
+    val ink = if (light) Color(0xFF2A2428) else Color.White
+    val field = if (light) Color(0xFFFBF9F6) else Color(0xFF12141A)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.56f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 28.dp)
+                .fillMaxWidth()
+                .shadow(24.dp, RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(24.dp))
+                .background(panel)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                )
+                .padding(horizontal = 20.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Dot(DotA)
+                Spacer(Modifier.width(5.dp))
+                Dot(DotB)
+                Spacer(Modifier.width(5.dp))
+                Dot(DotC)
+                Text(
+                    "UBAH NAMA",
+                    modifier = Modifier.padding(start = 10.dp),
+                    color = ink.copy(alpha = 0.72f),
+                    fontSize = 12.sp,
+                    letterSpacing = 2.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            BasicTextField(
+                value = value,
+                onValueChange = onChange,
+                textStyle = TextStyle(color = ink, fontSize = 18.sp, fontWeight = FontWeight.Medium),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(DotA),
+                modifier = Modifier
+                    .focusRequester(focus)
+                    .fillMaxWidth()
+                    .height(112.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(field)
+                    .padding(14.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+            Box(
+                Modifier
+                    .size(52.dp)
+                    .shadow(8.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(DotA)
+                    .clickable(onClick = onSave),
+                contentAlignment = Alignment.Center,
+            ) {
+                SaveIcon(Color.White)
+            }
+        }
+    }
+}
+
+@Composable
+private fun Dot(color: Color) {
+    Box(Modifier.size(9.dp).background(color, CircleShape))
 }
 
 @Composable
@@ -487,13 +645,6 @@ private fun clipName(text: String, max: Int): String {
     val clean = text.replace(Regex("\\.[A-Za-z0-9]+$"), "")
     if (clean.length <= max) return clean
     return clean.take(max).trimEnd() + "..."
-}
-
-private fun wrapDegrees(angle: Float): Float {
-    var value = angle % 360f
-    if (value > 180f) value -= 360f
-    if (value < -180f) value += 360f
-    return value
 }
 
 private fun displayName(context: android.content.Context, uri: Uri): String {
