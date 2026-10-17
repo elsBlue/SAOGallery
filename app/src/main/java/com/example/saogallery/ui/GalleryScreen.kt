@@ -241,9 +241,9 @@ private fun Fan(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val cardWidth = maxWidth * 0.72f
+        val cardWidth = maxWidth * 0.52f
         val cardHeight = cardWidth * 1.32f
-        val spread = with(density) { (maxWidth * 0.22f).toPx() }
+        val spread = with(density) { (maxWidth * 0.28f).toPx() }
         val count = photos.size
         val step = if (count == 0) 360f else 360f / count
         val center = if (count == 0) 0f else rotation / step
@@ -257,10 +257,8 @@ private fun Fan(
             Triple(index, photo, delta)
         }.filter { abs(it.third) < 1.7f }
         visible.forEach { (index, photo, delta) ->
-            val rel = delta * 18f
             val dist = abs(delta)
-            val scale = 0.88f + (1f - dist.coerceAtMost(1f)) * 0.12f
-            val boost = if (index == activeIndex) 1.02f else 1f
+            val scale = 1f - dist.coerceAtMost(1f) * 0.36f
             val fade = if (dist <= 1f) 1f else (1f - (dist - 1f) / 0.65f).coerceIn(0f, 1f)
             PortraitWindow(
                 photo = photo,
@@ -272,12 +270,13 @@ private fun Fan(
                     .height(cardHeight)
                     .graphicsLayer {
                         translationX = delta * spread
-                        translationY = dist * 12.dp.toPx()
-                        rotationY = (-rel).coerceIn(-22f, 22f)
-                        scaleX = scale * boost
-                        scaleY = scale * boost
+                        translationY = dist * 14.dp.toPx()
+                        rotationY = -delta * 40f
+                        rotationZ = delta * 10f
+                        scaleX = scale
+                        scaleY = scale
                         alpha = fade
-                        cameraDistance = 16.dp.toPx()
+                        cameraDistance = 980f * density.density
                         transformOrigin = TransformOrigin.Center
                     },
             )
