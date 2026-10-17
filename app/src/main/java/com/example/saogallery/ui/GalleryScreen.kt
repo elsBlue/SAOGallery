@@ -242,9 +242,9 @@ private fun Fan(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val cardWidth = maxWidth * if (compact) 0.66f else 0.62f
+        val cardWidth = maxWidth * if (compact) 0.54f else 0.58f
         val cardHeight = cardWidth * 1.32f
-        val radiusPx = with(density) { (maxWidth * if (compact) 0.16f else 0.24f).toPx() }
+        val spread = with(density) { (maxWidth * if (compact) 0.27f else 0.32f).toPx() }
         val count = photos.size
         val step = if (count == 0) 360f else 360f / count
         val center = if (count == 0) 0f else rotation / step
@@ -258,23 +258,21 @@ private fun Fan(
             Triple(index, photo, delta)
         }.sortedBy { abs(it.third) }.take(minOf(3, count))
         visible.forEach { (index, photo, delta) ->
-            val rel = delta * 34f
-            val rad = Math.toRadians(rel.toDouble())
-            val scale = 0.56f + (1f - abs(delta).coerceAtMost(1f)) * 0.44f
-            val boost = if (index == activeIndex) 1.04f else 1f
+            val rel = delta * 28f
+            val scale = 0.74f + (1f - abs(delta).coerceAtMost(1f)) * 0.26f
+            val boost = if (index == activeIndex) 1.03f else 1f
             PortraitWindow(
                 photo = photo,
                 focused = index == activeIndex,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .zIndex(1f - abs(delta))
+                    .zIndex(2f - abs(delta))
                     .width(cardWidth)
                     .height(cardHeight)
                     .graphicsLayer {
-                        translationX = sin(rad).toFloat() * radiusPx
-                        translationY = abs(delta) * 10.dp.toPx() - 8.dp.toPx()
-                        rotationY = (-rel * 0.7f).coerceIn(-48f, 48f)
-                        rotationZ = rel * 0.03f
+                        translationX = delta * spread
+                        translationY = abs(delta) * 12.dp.toPx()
+                        rotationY = (-rel).coerceIn(-36f, 36f)
                         scaleX = scale * boost
                         scaleY = scale * boost
                         cameraDistance = 16.dp.toPx()
