@@ -129,7 +129,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         if (count == 0) return
         settleJob?.cancel()
         val step = 360f / count
-        val next = rotation.value - deltaPx * DEGREES_PER_PIXEL
+        val next = rotation.value - deltaPx * (step / PIXELS_PER_CARD)
         rotation.value = next.coerceIn(dragOrigin - step, dragOrigin + step)
     }
 
@@ -579,7 +579,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        const val DEGREES_PER_PIXEL = 0.22f
+        const val PIXELS_PER_CARD = 150f
         const val DELETE_BATCH = 20
     }
 }

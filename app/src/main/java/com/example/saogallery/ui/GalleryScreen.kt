@@ -1094,6 +1094,7 @@ private fun BoxWithConstraintsFill(
                         alpha = fade
                         cameraDistance = 16.dp.toPx()
                         transformOrigin = TransformOrigin.Center
+                        clip = false
                     },
             )
         }
@@ -1107,14 +1108,39 @@ private fun PortraitWindow(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier
-            .shadow(24.dp, RoundedCornerShape(12.dp))
-            .clip(RoundedCornerShape(12.dp))
-            .background(Paper),
-    ) {
+    Box(modifier) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .shadow(24.dp, RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFFD9D3CC)),
+        ) {
+            PhotoImage(photo, Modifier.fillMaxSize())
+            if (featured) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.48f))
+                        .clickable(onClick = onOpen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LensGlyph()
+                }
+            }
+        }
         Row(
-            Modifier.fillMaxWidth().height(34.dp).padding(horizontal = 10.dp),
+            Modifier
+                .align(Alignment.TopCenter)
+                .offset(y = (-40).dp)
+                .fillMaxWidth()
+                .height(34.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Paper)
+                .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Dot(DotA)
@@ -1137,23 +1163,6 @@ private fun PortraitWindow(
                     color = Ink.copy(alpha = 0.55f),
                     fontSize = 12.sp,
                 )
-            }
-        }
-        Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFFD9D3CC))) {
-            PhotoImage(photo, Modifier.fillMaxSize())
-            if (featured) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.48f))
-                        .clickable(onClick = onOpen),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    LensGlyph()
-                }
             }
         }
     }
