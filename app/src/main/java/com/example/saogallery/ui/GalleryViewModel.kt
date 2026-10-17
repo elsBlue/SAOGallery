@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 data class GalleryUiState(
@@ -55,34 +56,51 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var dragOrigin = 0f
+    private var dragDx = 0f
+
     fun onDragStart() {
         settleJob?.cancel()
+        dragOrigin = rotation.value
+        dragDx = 0f
     }
 
     fun onDrag(deltaPx: Float) {
-        if (photos.value.isEmpty()) return
+        val count = photos.value.size
+        if (count == 0) return
         settleJob?.cancel()
-        rotation.value -= deltaPx * DEGREES_PER_PIXEL
+        dragDx += deltaPx
+        val step = 360f / count
+        val fraction = (-dragDx / PIXELS_PER_PHOTO).coerceIn(-1f, 1f)
+        rotation.value = dragOrigin + fraction * step
     }
 
     fun onDragEnd(velocityPx: Float) {
         val count = photos.value.size
         if (count == 0) return
         val step = 360f / count
-        val projected = rotation.value - velocityPx * FLING_SCALE
-        animateTo((projected / step).roundToInt() * step)
+        val fraction = (-dragDx / PIXELS_PER_PHOTO).coerceIn(-1f, 1f)
+        val nudged = abs(fraction) > 0.28f
+        val flicked = abs(fraction) > 0.16f && abs(velocityPx) > 1400f
+        val go = when {
+            nudged -> if (fraction > 0f) 1 else -1
+            flicked -> if (velocityPx < 0f) 1 else -1
+            else -> 0
+        }
+        val startIndex = (dragOrigin / step).roundToInt()
+        animateTo((startIndex + go) * step)
     }
 
     fun showIndex(index: Int) {
         val count = photos.value.size
         if (count == 0) return
         val step = 360f / count
-        val current = rotation.value
-        val currentMod = ((current % 360f) + 360f) % 360f
-        var delta = index * step - currentMod
-        if (delta > 180f) delta -= 360f
-        if (delta < -180f) delta += 360f
-        animateTo(current + delta)
+        val currentIndex = activeIndexFor(rotation.value, count)
+        var delta = index - currentIndex
+        if (delta > count / 2) delta -= count
+        if (delta < -count / 2) delta += count
+        if (abs(delta) <= 1) animateTo(rotation.value + delta * step)
+        else rotation.value = index * step
     }
 
     private fun animateTo(target: Float) {
@@ -111,7 +129,6 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        const val DEGREES_PER_PIXEL = 0.22f
-        const val FLING_SCALE = 0.045f
+        const val PIXELS_PER_PHOTO = 130f
     }
 }

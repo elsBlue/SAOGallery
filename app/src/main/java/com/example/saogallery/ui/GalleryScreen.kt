@@ -219,6 +219,17 @@ private fun Stage(
                     .padding(bottom = if (compact) 8.dp else 88.dp, start = 72.dp, end = 72.dp),
             )
         }
+        if (compact) {
+            Canvas(Modifier.fillMaxSize()) {
+                val shade = Color.Black.copy(alpha = if (light) 0.34f else 0.78f)
+                drawRect(
+                    brush = Brush.verticalGradient(listOf(shade, Color.Transparent, Color.Transparent, shade)),
+                )
+                drawRect(
+                    brush = Brush.horizontalGradient(listOf(shade, Color.Transparent, Color.Transparent, shade)),
+                )
+            }
+        }
     }
 }
 
@@ -231,43 +242,41 @@ private fun Fan(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val cardWidth = maxWidth * if (compact) 0.42f else 0.62f
+        val cardWidth = maxWidth * if (compact) 0.66f else 0.62f
         val cardHeight = cardWidth * 1.32f
-        val radiusPx = with(density) { (maxWidth * if (compact) 0.34f else 0.52f).toPx() }
+        val radiusPx = with(density) { (maxWidth * if (compact) 0.16f else 0.24f).toPx() }
         val count = photos.size
         val step = if (count == 0) 360f else 360f / count
         val center = if (count == 0) 0f else rotation / step
-        photos.forEachIndexed { index, photo ->
+        val visible = photos.mapIndexed { index, photo ->
             var delta = index - center
             if (count > 0) {
                 delta %= count
                 if (delta > count / 2f) delta -= count
                 if (delta < -count / 2f) delta += count
             }
-            if (count > 8 && abs(delta) > 2.4f) return@forEachIndexed
-            val rel = if (count <= 8) wrapDegrees(index * step - rotation) else delta * 32f
-            if (count <= 8 && abs(rel) > 130f) return@forEachIndexed
+            Triple(index, photo, delta)
+        }.sortedBy { abs(it.third) }.take(minOf(3, count))
+        visible.forEach { (index, photo, delta) ->
+            val rel = delta * 34f
             val rad = Math.toRadians(rel.toDouble())
-            val depth = cos(rad).toFloat()
-            val scale = 0.62f + ((depth + 1f) / 2f) * 0.5f
-            val fade = (1.15f - abs(rel) / 130f).coerceIn(0.15f, 1f)
+            val scale = 0.56f + (1f - abs(delta).coerceAtMost(1f)) * 0.44f
             val boost = if (index == activeIndex) 1.04f else 1f
             PortraitWindow(
                 photo = photo,
                 focused = index == activeIndex,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .zIndex(depth)
+                    .zIndex(1f - abs(delta))
                     .width(cardWidth)
                     .height(cardHeight)
                     .graphicsLayer {
                         translationX = sin(rad).toFloat() * radiusPx
-                        translationY = (1f - depth) * 28.dp.toPx() - 8.dp.toPx()
-                        rotationY = (-rel * 0.72f).coerceIn(-62f, 62f)
-                        rotationZ = rel * 0.045f
+                        translationY = abs(delta) * 10.dp.toPx() - 8.dp.toPx()
+                        rotationY = (-rel * 0.7f).coerceIn(-48f, 48f)
+                        rotationZ = rel * 0.03f
                         scaleX = scale * boost
                         scaleY = scale * boost
-                        alpha = fade
                         cameraDistance = 16.dp.toPx()
                         transformOrigin = TransformOrigin.Center
                     },
@@ -576,11 +585,4 @@ private fun clipName(text: String, max: Int): String {
     val clean = text.replace(Regex("\\.[A-Za-z0-9]+$"), "")
     if (clean.length <= max) return clean
     return clean.take(max).trimEnd() + "..."
-}
-
-private fun wrapDegrees(angle: Float): Float {
-    var value = angle % 360f
-    if (value > 180f) value -= 360f
-    if (value < -180f) value += 360f
-    return value
 }
