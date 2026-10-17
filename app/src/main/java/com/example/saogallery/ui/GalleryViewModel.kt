@@ -91,6 +91,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                 all.value = next
                 vault.save(next)
             }
+            delay(2_000)
+            all.value.filter { it.vaultFile != null }.forEach { vault.ensureThumb(it) }
         }
     }
 

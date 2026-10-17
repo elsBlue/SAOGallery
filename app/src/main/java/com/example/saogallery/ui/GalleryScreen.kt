@@ -83,6 +83,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import com.example.saogallery.R
 import com.example.saogallery.data.GalleryPhoto
 import com.example.saogallery.data.LockStore
+import com.example.saogallery.data.VAULT_THUMB_EDGE
 import com.example.saogallery.data.VaultStore
 import com.example.saogallery.data.formatTaken
 import com.example.saogallery.data.sendUnlockCode
@@ -804,7 +805,7 @@ private fun RestorePage(
                         .background(Color(0xFFD9D3CC))
                         .clickable { selected = if (on) selected - photo.id else selected + photo.id },
                 ) {
-                    PhotoImage(photo, Modifier.fillMaxSize())
+                    PhotoImage(photo, Modifier.fillMaxSize(), maxEdge = VAULT_THUMB_EDGE)
                     if (on) {
                         Box(Modifier.fillMaxSize().background(Color(0x552F9B68)))
                         Box(
@@ -1157,6 +1158,9 @@ private fun LensGlyph() {
     }
 }
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private val vaultDecodeDispatcher = Dispatchers.IO.limitedParallelism(2)
+
 @Composable
 private fun PhotoImage(
     photo: GalleryPhoto,
@@ -1166,11 +1170,12 @@ private fun PhotoImage(
 ) {
     if (photo.vaultFile != null) {
         val context = LocalContext.current
-        var bitmap by remember(photo.vaultFile) { mutableStateOf<ImageBitmap?>(null) }
-        LaunchedEffect(photo.vaultFile) {
-            bitmap = withContext(Dispatchers.IO) {
-                VaultStore(context).decode(photo, maxEdge)?.asImageBitmap()
+        var bitmap by remember(photo.vaultFile, maxEdge) { mutableStateOf<ImageBitmap?>(null) }
+        LaunchedEffect(photo.vaultFile, maxEdge) {
+            val decoded = withContext(vaultDecodeDispatcher) {
+                VaultStore(context).decode(photo, maxEdge)
             }
+            bitmap = decoded?.asImageBitmap()
         }
         bitmap?.let {
             Image(it, contentDescription = photo.name, modifier = modifier, contentScale = contentScale)
@@ -1223,7 +1228,7 @@ private fun PhotoGrid(
                         .background(Color(0xFFD9D3CC))
                         .clickable { onPick(index) },
                 ) {
-                    PhotoImage(photo, Modifier.fillMaxSize())
+                    PhotoImage(photo, Modifier.fillMaxSize(), maxEdge = VAULT_THUMB_EDGE)
                     if (index == activeIndex) {
                         Box(Modifier.fillMaxSize().background(Color(0x33FF4D6A)))
                     }
@@ -1279,7 +1284,7 @@ private fun TrashGrid(
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xFFD9D3CC)),
                 ) {
-                    PhotoImage(photo, Modifier.fillMaxSize())
+                    PhotoImage(photo, Modifier.fillMaxSize(), maxEdge = VAULT_THUMB_EDGE)
                     Box(
                         Modifier
                             .align(Alignment.BottomEnd)

@@ -6,18 +6,24 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.LruCache
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.KeyStore
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+
+internal const val VAULT_THUMB_EDGE = 384
 
 class VaultStore(context: Context) {
     private val dir = File(context.filesDir, "vault").apply {
@@ -61,35 +67,13 @@ class VaultStore(context: Context) {
 
     fun importStream(name: String, source: InputStream, id: String, takenAt: Long): GalleryPhoto? {
         val file = File(dir, "$id.nyt")
-        val tmp = File(dir, "$id.nyt.tmp")
-        try {
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey())
-            val iv = cipher.iv
-            if (iv == null || iv.size != IV_BYTES) error("vault iv")
-            FileOutputStream(tmp).use { out ->
-                out.write(iv)
-                val buf = ByteArray(CHUNK)
-                while (true) {
-                    val n = source.read(buf)
-                    if (n < 0) break
-                    val part = cipher.update(buf, 0, n)
-                    if (part != null && part.isNotEmpty()) out.write(part)
-                }
-                val tail = cipher.doFinal()
-                if (tail != null && tail.isNotEmpty()) out.write(tail)
-            }
-            if (file.exists() && !file.delete()) error("replace")
-            if (!tmp.renameTo(file)) {
-                tmp.inputStream().use { input -> file.outputStream().use { input.copyTo(it) } }
-                if (!tmp.delete()) tmp.deleteOnExit()
-            }
-        } catch (_: Exception) {
-            tmp.delete()
-            if (file.exists()) file.delete()
+        if (!encryptTo(file, source)) {
+            file.delete()
             return null
         }
-        return GalleryPhoto(id = id, name = name, vaultFile = file.name, takenAt = takenAt)
+        val photo = GalleryPhoto(id = id, name = name, vaultFile = file.name, takenAt = takenAt)
+        ensureThumb(photo)
+        return photo
     }
 
     fun openPlain(photo: GalleryPhoto): InputStream? = openDecrypt(photo)
@@ -110,29 +94,41 @@ class VaultStore(context: Context) {
         val name = photo.vaultFile ?: return null
         val file = File(dir, name)
         if (!file.isFile) return null
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        try {
-            plainStream(file)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-        } catch (_: Exception) {
-            return null
+        val key = "${photo.id}:$maxEdge"
+        ThumbMemory.get(key)?.let { return it }
+        val bitmap = if (maxEdge <= VAULT_THUMB_EDGE) {
+            ensureThumb(photo)
+            val thumb = thumbFile(name)
+            if (thumb.isFile) decodeEncrypted(thumb, maxEdge) else decodeEncrypted(file, maxEdge)
+        } else {
+            decodeEncrypted(file, maxEdge)
         }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sample = 1
-        while (bounds.outWidth / sample > maxEdge || bounds.outHeight / sample > maxEdge) sample *= 2
-        val options = BitmapFactory.Options().apply { inSampleSize = sample }
-        val input = plainStream(file) ?: return null
-        return try {
-            input.use { stream ->
-                val bitmap = BitmapFactory.decodeStream(stream, null, options) ?: return null
-                val buf = ByteArray(CHUNK)
-                while (stream.read(buf) >= 0) Unit
-                if (stream.wasAuthenticated()) bitmap else {
-                    if (!bitmap.isRecycled) bitmap.recycle()
-                    null
+        if (bitmap != null) ThumbMemory.put(key, bitmap)
+        return bitmap
+    }
+
+    fun ensureThumb(photo: GalleryPhoto) {
+        val name = photo.vaultFile ?: return
+        val lock = ThumbGate.locks.computeIfAbsent(name) { Any() }
+        synchronized(lock) {
+            val dest = thumbFile(name)
+            if (dest.isFile && dest.length() > IV_BYTES + TAG_BYTES) return
+            val sampled = decodeEncrypted(File(dir, name), VAULT_THUMB_EDGE) ?: return
+            var fitted: Bitmap? = null
+            try {
+                fitted = fit(sampled, VAULT_THUMB_EDGE)
+                val jpeg = ByteArrayOutputStream()
+                if (fitted.compress(Bitmap.CompressFormat.JPEG, 72, jpeg)) {
+                    val bytes = jpeg.toByteArray()
+                    if (bytes.isNotEmpty() && !encryptTo(dest, ByteArrayInputStream(bytes))) dest.delete()
+                    bytes.fill(0)
                 }
+            } catch (_: Exception) {
+                dest.delete()
+            } finally {
+                if (fitted != null && fitted !== sampled && !fitted.isRecycled) fitted.recycle()
+                if (!sampled.isRecycled) sampled.recycle()
             }
-        } catch (_: Exception) {
-            null
         }
     }
 
@@ -151,6 +147,10 @@ class VaultStore(context: Context) {
     fun deleteFile(photo: GalleryPhoto) {
         val name = photo.vaultFile ?: return
         File(dir, name).delete()
+        val thumb = thumbFile(name)
+        thumb.delete()
+        File(dir, thumb.name + ".tmp").delete()
+        ThumbMemory.drop(photo.id)
     }
 
     fun trashExplained(): Boolean = prefs.getBoolean(TRASH_EXPLAINED, false)
@@ -198,6 +198,81 @@ class VaultStore(context: Context) {
             )
         }
         index.writeText(array.toString())
+    }
+
+    private fun thumbFile(vaultName: String): File {
+        val id = vaultName.removeSuffix(".nyt")
+        return File(dir, "$id.thumb.nyt")
+    }
+
+    private fun encryptTo(dest: File, source: InputStream): Boolean {
+        val tmp = File(dir, dest.name + ".tmp")
+        return try {
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+            val iv = cipher.iv
+            if (iv == null || iv.size != IV_BYTES) error("vault iv")
+            FileOutputStream(tmp).use { out ->
+                out.write(iv)
+                val buf = ByteArray(CHUNK)
+                while (true) {
+                    val n = source.read(buf)
+                    if (n < 0) break
+                    val part = cipher.update(buf, 0, n)
+                    if (part != null && part.isNotEmpty()) out.write(part)
+                }
+                val tail = cipher.doFinal()
+                if (tail != null && tail.isNotEmpty()) out.write(tail)
+            }
+            if (dest.exists() && !dest.delete()) error("replace")
+            if (!tmp.renameTo(dest)) {
+                tmp.inputStream().use { input -> dest.outputStream().use { input.copyTo(it) } }
+                if (!tmp.delete()) tmp.deleteOnExit()
+            }
+            true
+        } catch (_: Exception) {
+            tmp.delete()
+            false
+        }
+    }
+
+    private fun decodeEncrypted(file: File, maxEdge: Int): Bitmap? {
+        if (!file.isFile || file.length() < IV_BYTES + TAG_BYTES) return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        try {
+            plainStream(file)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        } catch (_: Exception) {
+            return null
+        }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / sample > maxEdge || bounds.outHeight / sample > maxEdge) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        val input = plainStream(file) ?: return null
+        return try {
+            input.use { stream ->
+                val bitmap = BitmapFactory.decodeStream(stream, null, options) ?: return null
+                val buf = ByteArray(CHUNK)
+                while (stream.read(buf) >= 0) Unit
+                if (stream.wasAuthenticated()) bitmap else {
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                    null
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun fit(bitmap: Bitmap, maxEdge: Int): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val edge = maxOf(width, height)
+        if (edge <= maxEdge || edge <= 0) return bitmap
+        val nextWidth = maxOf(1, width * maxEdge / edge)
+        val nextHeight = maxOf(1, height * maxEdge / edge)
+        if (nextWidth == width && nextHeight == height) return bitmap
+        return Bitmap.createScaledBitmap(bitmap, nextWidth, nextHeight, true)
     }
 
     private fun openDecrypt(photo: GalleryPhoto): GcmPlainStream? {
@@ -359,5 +434,32 @@ class VaultStore(context: Context) {
             "cat" to "Kucing di Taman Bunga",
             "lantern" to "Lentera Festival Siang",
         )
+    }
+}
+
+private object ThumbGate {
+    val locks = ConcurrentHashMap<String, Any>()
+}
+
+private object ThumbMemory {
+    private val edges = intArrayOf(VAULT_THUMB_EDGE, 1080, 2400)
+    private val cache = object : LruCache<String, Bitmap>(budget()) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount.coerceAtLeast(1)
+    }
+
+    private fun budget(): Int {
+        val share = (Runtime.getRuntime().maxMemory() * 0.25).toInt()
+        return share.coerceIn(12 * 1024 * 1024, 48 * 1024 * 1024)
+    }
+
+    fun get(key: String): Bitmap? = cache.get(key)?.takeIf { !it.isRecycled }
+
+    fun put(key: String, bitmap: Bitmap) {
+        if (bitmap.isRecycled || bitmap.allocationByteCount > 5 * 1024 * 1024) return
+        cache.put(key, bitmap)
+    }
+
+    fun drop(id: String) {
+        edges.forEach { cache.remove("$id:$it") }
     }
 }
