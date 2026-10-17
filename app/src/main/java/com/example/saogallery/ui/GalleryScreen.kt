@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -81,10 +82,13 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.example.saogallery.R
 import com.example.saogallery.data.GalleryPhoto
+import com.example.saogallery.data.LockStore
 import com.example.saogallery.data.VaultStore
 import com.example.saogallery.data.formatTaken
+import com.example.saogallery.data.sendUnlockCode
 import com.example.saogallery.data.yearOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.text.BasicTextField
@@ -131,7 +135,12 @@ fun GalleryScreen(
     onTrashExplained: () -> Unit,
 ) {
     val context = LocalContext.current
+    val lockStore = remember { LockStore(context) }
+    val scope = rememberCoroutineScope()
     var light by remember { mutableStateOf(false) }
+    var locked by remember { mutableStateOf(lockStore.configured()) }
+    var confirmingLock by remember { mutableStateOf(false) }
+    var settingLock by remember { mutableStateOf(false) }
     var galleryOpen by remember { mutableStateOf(false) }
     var trashOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
@@ -206,8 +215,11 @@ fun GalleryScreen(
         }
     }
 
-    BackHandler(enabled = viewing || editing || explainingTrash || emptyingTrash || restoreOpen || trashOpen || galleryOpen) {
+    BackHandler(enabled = locked || settingLock || confirmingLock || viewing || editing || explainingTrash || emptyingTrash || restoreOpen || trashOpen || galleryOpen) {
         when {
+            settingLock -> settingLock = false
+            confirmingLock -> confirmingLock = false
+            locked -> Unit
             viewing -> viewing = false
             editing -> editing = false
             explainingTrash -> explainingTrash = false
@@ -287,6 +299,16 @@ fun GalleryScreen(
                 )
             }
         }
+
+        ChromeButton(
+            container = chrome,
+            icon = chromeInk,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(top = 12.dp, start = 12.dp),
+            onClick = { confirmingLock = true },
+        ) { LockGlyph() }
 
         ChromeButton(
             container = chrome,
@@ -416,8 +438,51 @@ fun GalleryScreen(
             )
         }
         val openPhoto = state.photos.getOrNull(state.activeIndex)
-        if (viewing && openPhoto != null) {
+        if (viewing && openPhoto != null && !locked) {
             FullView(photo = openPhoto, onClose = { viewing = false })
+        }
+        if (confirmingLock && !locked) {
+            LockConfirm(
+                light = light,
+                body = if (lockStore.configured()) {
+                    "Lock Nyte Gallery now? Opening it again needs one of the ways you set."
+                } else {
+                    "Lock Nyte Gallery? Next you will set at least two ways to unlock, and an email for a recovery code."
+                },
+                confirm = if (lockStore.configured()) "Lock" else "Continue",
+                onDismiss = { confirmingLock = false },
+                onConfirm = {
+                    confirmingLock = false
+                    if (lockStore.configured()) locked = true else settingLock = true
+                },
+            )
+        }
+        if (settingLock) {
+            LockSetupPage(
+                light = light,
+                onClose = { settingLock = false },
+                onSave = { email, password, pin, pattern, finger ->
+                    lockStore.save(email, password, pin, pattern, finger)
+                    settingLock = false
+                    locked = true
+                },
+            )
+        }
+        if (locked) {
+            LockGate(
+                light = light,
+                store = lockStore,
+                onUnlocked = { locked = false },
+                onSendCode = { done ->
+                    scope.launch {
+                        val code = lockStore.issueCode()
+                        val sent = withContext(Dispatchers.IO) {
+                            sendUnlockCode(lockStore.email(), code)
+                        }
+                        done(sent)
+                    }
+                },
+            )
         }
     }
 }
@@ -1268,16 +1333,29 @@ private fun RenameOverlay(
                     .padding(14.dp),
             )
             Spacer(Modifier.height(16.dp))
-            Box(
-                Modifier
-                    .size(52.dp)
-                    .shadow(8.dp, CircleShape)
-                    .clip(CircleShape)
-                    .background(DotA)
-                    .clickable(onClick = onSave),
-                contentAlignment = Alignment.Center,
-            ) {
-                SaveIcon(Color.White)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(ink.copy(alpha = 0.12f))
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Close", color = ink, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                }
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(DotA)
+                        .clickable(onClick = onSave),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Save", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                }
             }
         }
     }
@@ -1324,26 +1402,32 @@ private fun SunMoonIcon(light: Boolean) {
                 )
             }
         } else {
-            val radius = size.minDimension * 0.36f
+            val radius = size.minDimension * 0.32f
+            val moonCenter = Offset(size.width * 0.38f, size.height * 0.50f)
             val moon = Path().apply {
                 addOval(
                     androidx.compose.ui.geometry.Rect(
-                        Offset(size.width * 0.40f - radius, size.height * 0.50f - radius),
+                        moonCenter - Offset(radius, radius),
                         Size(radius * 2f, radius * 2f),
                     ),
                 )
             }
+            val biteRadius = radius * 0.78f
+            val biteCenter = moonCenter + Offset(radius * 0.55f, -radius * 0.05f)
             val bite = Path().apply {
-                val biteRadius = radius * 0.86f
                 addOval(
                     androidx.compose.ui.geometry.Rect(
-                        Offset(size.width * 0.62f - biteRadius, size.height * 0.42f - biteRadius),
+                        biteCenter - Offset(biteRadius, biteRadius),
                         Size(biteRadius * 2f, biteRadius * 2f),
                     ),
                 )
             }
-            clipPath(bite, clipOp = ClipOp.Difference) {
-                drawPath(moon, color)
+            withTransform({
+                translate(left = size.width * 0.10f, top = 0f)
+            }) {
+                clipPath(bite, clipOp = ClipOp.Difference) {
+                    drawPath(moon, color)
+                }
             }
         }
     }
