@@ -31,7 +31,14 @@ class VaultStore(context: Context) {
         val saved = read()
         return saved.map { photo ->
             val bundled = GalleryRepository.photos.find { it.id == photo.id }
-            if (bundled != null && photo.vaultFile == null) photo.copy(imageRes = bundled.imageRes) else photo
+            if (bundled != null && photo.vaultFile == null) {
+                photo.copy(
+                    imageRes = bundled.imageRes,
+                    takenAt = if (photo.takenAt > 0L) photo.takenAt else bundled.takenAt,
+                )
+            } else {
+                photo
+            }
         }
     }
 
@@ -40,10 +47,10 @@ class VaultStore(context: Context) {
         write(photos)
     }
 
-    fun import(name: String, bytes: ByteArray, id: String): GalleryPhoto {
+    fun import(name: String, bytes: ByteArray, id: String, takenAt: Long): GalleryPhoto {
         val file = File(dir, "$id.nyt")
         file.writeBytes(encrypt(bytes))
-        return GalleryPhoto(id = id, name = name, vaultFile = file.name)
+        return GalleryPhoto(id = id, name = name, vaultFile = file.name, takenAt = takenAt)
     }
 
     fun read(photo: GalleryPhoto): ByteArray? {
@@ -85,6 +92,7 @@ class VaultStore(context: Context) {
                 name = item.getString("name"),
                 vaultFile = item.optString("file").ifBlank { null },
                 trashedAt = item.optLong("trashedAt").takeIf { item.has("trashedAt") && !item.isNull("trashedAt") && it > 0L },
+                takenAt = item.optLong("takenAt"),
             )
         }
     }
@@ -97,7 +105,8 @@ class VaultStore(context: Context) {
                     .put("id", photo.id)
                     .put("name", photo.name)
                     .put("file", photo.vaultFile ?: "")
-                    .put("trashedAt", photo.trashedAt ?: JSONObject.NULL),
+                    .put("trashedAt", photo.trashedAt ?: JSONObject.NULL)
+                    .put("takenAt", photo.takenAt),
             )
         }
         index.writeText(array.toString())

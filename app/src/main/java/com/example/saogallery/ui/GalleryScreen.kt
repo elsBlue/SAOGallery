@@ -12,6 +12,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +73,8 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.example.saogallery.data.GalleryPhoto
 import com.example.saogallery.data.VaultStore
+import com.example.saogallery.data.formatTaken
+import com.example.saogallery.data.yearOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.Canvas
@@ -119,6 +124,7 @@ fun GalleryScreen(
     var trashOpen by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var explainingTrash by remember { mutableStateOf(false) }
+    var viewing by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     val view = LocalView.current
     androidx.compose.runtime.SideEffect {
@@ -153,8 +159,9 @@ fun GalleryScreen(
         }
     }
 
-    BackHandler(enabled = editing || explainingTrash || trashOpen || galleryOpen) {
+    BackHandler(enabled = viewing || editing || explainingTrash || trashOpen || galleryOpen) {
         when {
+            viewing -> viewing = false
             editing -> editing = false
             explainingTrash -> explainingTrash = false
             trashOpen -> trashOpen = false
@@ -202,6 +209,7 @@ fun GalleryScreen(
                     ink = ink,
                     onEdit = openRename,
                     onDelete = requestTrash,
+                    onOpen = { viewing = true },
                 )
             }
             if (trashOpen) {
@@ -289,6 +297,10 @@ fun GalleryScreen(
                 },
             )
         }
+        val openPhoto = state.photos.getOrNull(state.activeIndex)
+        if (viewing && openPhoto != null) {
+            FullView(photo = openPhoto, onClose = { viewing = false })
+        }
     }
 }
 
@@ -302,6 +314,7 @@ private fun Stage(
     ink: Color,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    onOpen: () -> Unit,
 ) {
     val active = state.photos.getOrNull(state.activeIndex)
     Box(Modifier.fillMaxSize()) {
@@ -310,6 +323,7 @@ private fun Stage(
             photos = state.photos,
             rotation = state.rotation,
             activeIndex = state.activeIndex,
+            onOpen = onOpen,
         )
         Text(
             text = "NYTE GALLERY",
@@ -352,6 +366,16 @@ private fun Stage(
                         }
                     }
                 }
+                val taken = formatTaken(active.takenAt)
+                if (taken.isNotEmpty()) {
+                    Text(
+                        text = taken,
+                        color = ink.copy(alpha = 0.62f),
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
             }
         }
         if (showActions && active != null) {
@@ -389,6 +413,7 @@ private fun BoxWithConstraintsFill(
     photos: List<GalleryPhoto>,
     rotation: Float,
     activeIndex: Int,
+    onOpen: () -> Unit,
 ) {
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
@@ -419,6 +444,8 @@ private fun BoxWithConstraintsFill(
             val boost = if (index == activeIndex) 1.04f else 1f
             PortraitWindow(
                 photo = photo,
+                featured = index == activeIndex,
+                onOpen = onOpen,
                 modifier = Modifier
                     .align(Alignment.Center)
                     .zIndex(depth)
@@ -443,6 +470,8 @@ private fun BoxWithConstraintsFill(
 @Composable
 private fun PortraitWindow(
     photo: GalleryPhoto,
+    featured: Boolean,
+    onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -462,39 +491,132 @@ private fun PortraitWindow(
             Dot(DotC)
             Text(
                 text = clipName(photo.name, CARD_LIMIT),
-                modifier = Modifier.padding(start = 8.dp),
+                modifier = Modifier.padding(start = 8.dp).weight(1f),
                 color = Ink.copy(alpha = 0.72f),
                 fontSize = 12.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Clip,
+                overflow = TextOverflow.Ellipsis,
             )
+            val year = yearOf(photo.takenAt)
+            if (year.isNotEmpty()) {
+                Text(
+                    text = year,
+                    color = Ink.copy(alpha = 0.55f),
+                    fontSize = 12.sp,
+                )
+            }
         }
         Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFFD9D3CC))) {
             PhotoImage(photo, Modifier.fillMaxSize())
+            if (featured) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.48f))
+                        .clickable(onClick = onOpen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LensGlyph()
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun PhotoImage(photo: GalleryPhoto, modifier: Modifier) {
+private fun FullView(photo: GalleryPhoto, onClose: () -> Unit) {
+    var scale by remember(photo.id) { mutableFloatStateOf(1f) }
+    var offset by remember(photo.id) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val transform = rememberTransformableState { zoom, pan, _ ->
+        val next = (scale * zoom).coerceIn(1f, 6f)
+        scale = next
+        offset = if (next <= 1.01f) androidx.compose.ui.geometry.Offset.Zero else offset + pan
+    }
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        PhotoImage(
+            photo = photo,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                }
+                .transformable(transform),
+            contentScale = ContentScale.Fit,
+            maxEdge = 2400,
+        )
+        Text(
+            text = "Nyte Gallery",
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.4.sp,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(top = 16.dp),
+        )
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(top = 8.dp, end = 12.dp)
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.16f))
+                .clickable(onClick = onClose),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(Modifier.size(16.dp)) {
+                val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.8.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                drawLine(Color.White, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(size.width, size.height), stroke.width, androidx.compose.ui.graphics.StrokeCap.Round)
+                drawLine(Color.White, androidx.compose.ui.geometry.Offset(size.width, 0f), androidx.compose.ui.geometry.Offset(0f, size.height), stroke.width, androidx.compose.ui.graphics.StrokeCap.Round)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LensGlyph() {
+    Canvas(Modifier.size(18.dp)) {
+        val color = Color.White
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+        drawCircle(color, radius = size.minDimension * 0.38f, style = stroke)
+        drawCircle(color, radius = size.minDimension * 0.16f, style = stroke)
+        drawCircle(color, radius = size.minDimension * 0.045f)
+    }
+}
+
+@Composable
+private fun PhotoImage(
+    photo: GalleryPhoto,
+    modifier: Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+    maxEdge: Int = 1080,
+) {
     if (photo.vaultFile != null) {
         val context = LocalContext.current
         var bitmap by remember(photo.vaultFile) { mutableStateOf<ImageBitmap?>(null) }
         LaunchedEffect(photo.vaultFile) {
             bitmap = withContext(Dispatchers.IO) {
                 val bytes = VaultStore(context).read(photo) ?: return@withContext null
-                decodeScaled(bytes, 1080)?.asImageBitmap()
+                decodeScaled(bytes, maxEdge)?.asImageBitmap()
             }
         }
         bitmap?.let {
-            Image(it, contentDescription = photo.name, modifier = modifier, contentScale = ContentScale.Crop)
+            Image(it, contentDescription = photo.name, modifier = modifier, contentScale = contentScale)
         }
     } else if (photo.imageRes != 0) {
         Image(
             painter = painterResource(photo.imageRes),
             contentDescription = photo.name,
             modifier = modifier,
-            contentScale = ContentScale.Crop,
+            contentScale = contentScale,
         )
     }
 }

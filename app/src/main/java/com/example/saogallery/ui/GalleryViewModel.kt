@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.saogallery.data.GalleryPhoto
 import com.example.saogallery.data.VaultStore
+import com.example.saogallery.data.captureMillis
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -35,6 +36,28 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private val rotation = MutableStateFlow(0f)
     private var settleJob: Job? = null
     private var dragOrigin = 0f
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            var changed = false
+            val next = all.value.map { photo ->
+                if (photo.takenAt > 0L || photo.vaultFile == null) photo
+                else {
+                    val millis = vault.read(photo)?.let { captureMillis(it) } ?: 0L
+                    if (millis > 0L) {
+                        changed = true
+                        photo.copy(takenAt = millis)
+                    } else {
+                        photo
+                    }
+                }
+            }
+            if (changed) {
+                all.value = next
+                vault.save(next)
+            }
+        }
+    }
 
     val uiState: StateFlow<GalleryUiState> = combine(all, rotation) { list, angle ->
         val visible = list.filter { it.trashedAt == null }
@@ -127,7 +150,8 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
                         .openInputStream(Uri.parse(uri))
                         ?.use { it.readBytes() }
                         ?: return@mapNotNull null
-                    vault.import(name, bytes, UUID.randomUUID().toString())
+                    val taken = captureMillis(bytes).takeIf { it > 0L } ?: System.currentTimeMillis()
+                    vault.import(name, bytes, UUID.randomUUID().toString(), taken)
                 }
             }
             if (added.isEmpty()) return@launch
