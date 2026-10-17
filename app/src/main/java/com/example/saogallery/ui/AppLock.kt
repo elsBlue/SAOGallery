@@ -1,6 +1,7 @@
 package com.example.saogallery.ui
 
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.Canvas
@@ -18,6 +19,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,15 +62,31 @@ private val LockPink = Color(0xFFFF4D6A)
 private val LockGreen = Color(0xFF2F9B68)
 
 fun fingerprintAvailable(context: Context): Boolean {
-    val result = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
-    return result == BiometricManager.BIOMETRIC_SUCCESS
+    val manager = BiometricManager.from(context)
+    val weak = manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+    if (weak == BiometricManager.BIOMETRIC_SUCCESS || weak == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) return true
+    val strong = manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+    return strong == BiometricManager.BIOMETRIC_SUCCESS || strong == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED
+}
+
+private fun findActivity(context: Context): FragmentActivity? {
+    var current = context
+    while (current is ContextWrapper) {
+        if (current is FragmentActivity) return current
+        current = current.baseContext
+    }
+    return null
 }
 
 fun promptFingerprint(context: Context, title: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
-    val activity = context as? FragmentActivity ?: return onError("Fingerprint is not available")
+    val activity = findActivity(context) ?: return onError("Couldn't open the fingerprint prompt")
+    val enrolled = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+    if (enrolled == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) {
+        return onError("Add a fingerprint in system settings first")
+    }
     val prompt = BiometricPrompt(
         activity,
-        ContextCompat.getMainExecutor(context),
+        ContextCompat.getMainExecutor(activity),
         object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onSuccess()
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -79,6 +99,8 @@ fun promptFingerprint(context: Context, title: String, onSuccess: () -> Unit, on
     prompt.authenticate(
         BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
+            .setSubtitle("Use the fingerprint saved on this phone")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
             .setNegativeButtonText("Cancel")
             .build(),
     )
@@ -135,7 +157,12 @@ fun LockSetupPage(
     val readyCount = listOf(password, pin, pattern).count { it != null } + if (finger) 1 else 0
     val emailOk = email.trim().matches(Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"))
     Column(
-        Modifier.fillMaxSize().background(panel).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 28.dp),
+        Modifier
+            .fillMaxSize()
+            .background(panel)
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 18.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("LOCK", color = ink, fontSize = 13.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -149,14 +176,14 @@ fun LockSetupPage(
             lineHeight = 21.sp,
         )
         Spacer(Modifier.height(16.dp))
-        Text("Recovery email", color = ink.copy(alpha = 0.6f), fontSize = 12.sp)
-        LockField(email, field, ink, KeyboardType.Email, false) { email = it }
+        Text("Recovery email", color = ink.copy(alpha = 0.55f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        LockField(email, field, ink, KeyboardType.Email, false, "name@email.com") { email = it }
         Spacer(Modifier.height(16.dp))
         MethodRow("Password", password != null, ink, field) { open = if (open == LockStore.PASSWORD) null else LockStore.PASSWORD }
-        if (open == LockStore.PASSWORD) SecretPair(ink, field, KeyboardType.Password, "At least 6 characters") { first, second ->
+        if (open == LockStore.PASSWORD) SecretPair(ink, field, KeyboardType.Password, "New password", "At least 6 characters", "Confirm password", "Type it again") { first, second ->
             error = when {
                 first.length < 6 -> "Password needs at least 6 characters"
-                first != second -> "Passwords do not match"
+                first != second -> "Those passwords do not match"
                 else -> {
                     password = first
                     open = null
@@ -165,10 +192,10 @@ fun LockSetupPage(
             }
         }
         MethodRow("PIN", pin != null, ink, field) { open = if (open == LockStore.PIN) null else LockStore.PIN }
-        if (open == LockStore.PIN) SecretPair(ink, field, KeyboardType.NumberPassword, "4 to 6 digits") { first, second ->
+        if (open == LockStore.PIN) SecretPair(ink, field, KeyboardType.NumberPassword, "New PIN", "4 to 6 digits", "Confirm PIN", "Type the same PIN again") { first, second ->
             error = when {
                 !first.matches(Regex("\\d{4,6}")) -> "PIN must be 4 to 6 digits"
-                first != second -> "PINs do not match"
+                first != second -> "Those PINs do not match"
                 else -> {
                     pin = first
                     open = null
@@ -178,7 +205,6 @@ fun LockSetupPage(
         }
         MethodRow("Pattern", pattern != null, ink, field) { open = if (open == LockStore.PATTERN) null else LockStore.PATTERN }
         if (open == LockStore.PATTERN) {
-            Text("Draw a pattern, then draw it again.", color = ink.copy(alpha = 0.65f), fontSize = 13.sp)
             PatternConfirm(ink) { value ->
                 pattern = value
                 open = null
@@ -258,7 +284,7 @@ fun LockGate(
         }
         when {
             emailMode -> {
-                LockField(value, field, ink, KeyboardType.Number, false) { if (it.length <= 6) value = it.filter { ch -> ch.isDigit() } }
+                LockField(value, field, ink, KeyboardType.Number, false, "6-digit code") { if (it.length <= 6) value = it.filter { ch -> ch.isDigit() } }
                 Spacer(Modifier.height(14.dp))
                 LockButton("Unlock", LockPink, Color.White, Modifier.fillMaxWidth()) {
                     if (store.matchesCode(value)) onUnlocked() else error = "That code is wrong or expired"
@@ -288,7 +314,7 @@ fun LockGate(
             }
             else -> {
                 val numeric = method == LockStore.PIN
-                LockField(value, field, ink, if (numeric) KeyboardType.NumberPassword else KeyboardType.Password, true) {
+                LockField(value, field, ink, if (numeric) KeyboardType.NumberPassword else KeyboardType.Password, true, if (numeric) "PIN" else "Password") {
                     value = if (numeric) it.filter { ch -> ch.isDigit() }.take(6) else it
                 }
                 Spacer(Modifier.height(14.dp))
@@ -331,8 +357,17 @@ private fun MethodRow(label: String, set: Boolean, ink: Color, field: Color, onC
             .padding(horizontal = 14.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, color = ink, fontSize = 16.sp, modifier = Modifier.weight(1f))
-        Text(if (set) "Set" else "Set up", color = if (set) LockGreen else ink.copy(alpha = 0.45f), fontWeight = FontWeight.SemiBold)
+        Text(label, color = ink, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+        Text(
+            if (set) "Ready" else "Set up",
+            color = if (set) Color.White else ink.copy(alpha = 0.72f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(if (set) LockGreen else ink.copy(alpha = 0.08f))
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+        )
     }
 }
 
@@ -341,16 +376,31 @@ private fun SecretPair(
     ink: Color,
     field: Color,
     keyboard: KeyboardType,
-    hint: String,
+    firstLabel: String,
+    firstHint: String,
+    secondLabel: String,
+    secondHint: String,
     onSubmit: (String, String) -> Unit,
 ) {
     var first by remember { mutableStateOf("") }
     var second by remember { mutableStateOf("") }
-    Text(hint, color = ink.copy(alpha = 0.55f), fontSize = 12.sp)
-    LockField(first, field, ink, keyboard, true) { first = it }
-    LockField(second, field, ink, keyboard, true) { second = it }
-    LockButton("Save this way", LockGreen, Color.White, Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp)) {
-        onSubmit(first.trim(), second.trim())
+    Column(
+        Modifier
+            .padding(bottom = 8.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(ink.copy(alpha = 0.05f))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+    ) {
+        Text(firstLabel, color = ink.copy(alpha = 0.55f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        LockField(first, field, ink, keyboard, true, firstHint) { first = it }
+        Spacer(Modifier.height(8.dp))
+        Text(secondLabel, color = ink.copy(alpha = 0.55f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        LockField(second, field, ink, keyboard, true, secondHint) { second = it }
+        Spacer(Modifier.height(12.dp))
+        LockButton("Save", LockPink, Color.White, Modifier.fillMaxWidth()) {
+            onSubmit(first.trim(), second.trim())
+        }
     }
 }
 
@@ -358,62 +408,70 @@ private fun SecretPair(
 private fun PatternConfirm(ink: Color, onConfirmed: (String) -> Unit) {
     var first by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf("Draw at least 4 dots") }
-    PatternPad(ink) { drawn ->
-        val saved = first
-        if (saved == null) {
-            if (drawn.split("-").size < 4) message = "Use at least 4 dots"
-            else {
-                first = drawn
-                message = "Draw the same pattern again"
+    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(message, color = ink.copy(alpha = 0.72f), fontSize = 14.sp, textAlign = TextAlign.Center)
+        PatternPad(ink) { drawn ->
+            val saved = first
+            if (saved == null) {
+                if (drawn.split("-").size < 4) message = "Use at least 4 dots"
+                else {
+                    first = drawn
+                    message = "Draw that pattern again to confirm"
+                }
+            } else if (saved == drawn) onConfirmed(drawn) else {
+                first = null
+                message = "That didn't match. Draw a new pattern."
             }
-        } else if (saved == drawn) onConfirmed(drawn) else message = "Patterns do not match. Draw it again."
+        }
     }
-    Text(message, color = ink.copy(alpha = 0.65f), fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
 }
 
 @Composable
 private fun PatternPad(ink: Color, onComplete: (String) -> Unit) {
     var selected by remember { mutableStateOf(listOf<Int>()) }
     val complete = rememberUpdatedState(onComplete)
-    Canvas(
-        Modifier
-            .padding(vertical = 12.dp)
-            .size(240.dp)
-            .pointerInput(Unit) {
-                val current = mutableListOf<Int>()
-                detectDragGestures(
-                    onDragStart = { start ->
-                        current.clear()
-                        hit(start, size.width.toFloat())?.let { current += it }
-                        selected = current.toList()
-                    },
-                    onDrag = { change, _ ->
-                        val next = hit(change.position, size.width.toFloat())
-                        if (next != null && next !in current) {
-                            current += next
+    Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+        Canvas(
+            Modifier
+                .size(248.dp)
+                .pointerInput(Unit) {
+                    val current = mutableListOf<Int>()
+                    detectDragGestures(
+                        onDragStart = { start ->
+                            current.clear()
+                            hit(start, size.width.toFloat())?.let { current += it }
                             selected = current.toList()
-                        }
-                    },
-                    onDragEnd = {
-                        if (current.isNotEmpty()) complete.value(current.joinToString("-"))
-                        current.clear()
-                        selected = emptyList()
-                    },
-                    onDragCancel = {
-                        current.clear()
-                        selected = emptyList()
-                    },
-                )
-            },
-    ) {
-        val cell = size.minDimension / 3f
-        fun centerOf(index: Int) = Offset(cell * (index % 3 + 0.5f), cell * (index / 3 + 0.5f))
-        for (i in 0 until selected.lastIndex) {
-            drawLine(LockPink, centerOf(selected[i]), centerOf(selected[i + 1]), 4.dp.toPx(), StrokeCap.Round)
-        }
-        repeat(9) { index ->
-            val on = index in selected
-            drawCircle(if (on) LockPink else ink.copy(alpha = 0.35f), radius = if (on) 10.dp.toPx() else 7.dp.toPx(), center = centerOf(index))
+                        },
+                        onDrag = { change, _ ->
+                            val next = hit(change.position, size.width.toFloat())
+                            if (next != null && next !in current) {
+                                current += next
+                                selected = current.toList()
+                            }
+                        },
+                        onDragEnd = {
+                            if (current.isNotEmpty()) complete.value(current.joinToString("-"))
+                            current.clear()
+                            selected = emptyList()
+                        },
+                        onDragCancel = {
+                            current.clear()
+                            selected = emptyList()
+                        },
+                    )
+                },
+        ) {
+            val cell = size.minDimension / 3f
+            fun centerOf(index: Int) = Offset(cell * (index % 3 + 0.5f), cell * (index / 3 + 0.5f))
+            for (i in 0 until selected.lastIndex) {
+                drawLine(LockPink, centerOf(selected[i]), centerOf(selected[i + 1]), 3.dp.toPx(), StrokeCap.Round)
+            }
+            repeat(9) { index ->
+                val on = index in selected
+                val center = centerOf(index)
+                drawCircle(ink.copy(alpha = if (on) 0.16f else 0.08f), radius = 22.dp.toPx(), center = center)
+                drawCircle(if (on) LockPink else ink.copy(alpha = 0.72f), radius = if (on) 8.dp.toPx() else 6.dp.toPx(), center = center)
+            }
         }
     }
 }
@@ -437,24 +495,33 @@ private fun LockField(
     ink: Color,
     keyboard: KeyboardType,
     hidden: Boolean,
+    placeholder: String,
     onChange: (String) -> Unit,
 ) {
-    BasicTextField(
-        value = value,
-        onValueChange = onChange,
-        singleLine = true,
-        textStyle = TextStyle(color = ink, fontSize = 16.sp),
-        cursorBrush = SolidColor(LockPink),
-        visualTransformation = if (hidden) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboard),
-        modifier = Modifier
-            .padding(top = 8.dp)
+    Box(
+        Modifier
+            .padding(top = 6.dp)
             .fillMaxWidth()
-            .height(48.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .height(52.dp)
+            .clip(RoundedCornerShape(16.dp))
             .background(field)
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-    )
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        if (value.isEmpty()) {
+            Text(placeholder, color = ink.copy(alpha = 0.32f), fontSize = 15.sp)
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            singleLine = true,
+            textStyle = TextStyle(color = ink, fontSize = 16.sp),
+            cursorBrush = SolidColor(LockPink),
+            visualTransformation = if (hidden) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboard),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 
 @Composable
