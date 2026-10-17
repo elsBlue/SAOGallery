@@ -289,28 +289,38 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun importFromDevice(uriStrings: List<String>, onReady: (ImportOutcome) -> Unit) {
         if (uriStrings.isEmpty()) return
+        if (!openTransfer("Moving into Nyte", uriStrings.size)) return
         val start = visible().size
         viewModelScope.launch {
-            val uris = uriStrings.map { Uri.parse(it) }
-            val imported = withContext(Dispatchers.IO) {
+            val imported = mutableListOf<Pair<Uri, GalleryPhoto>>()
+            try {
                 val resolver = getApplication<Application>().contentResolver
-                uris.mapNotNull { uri ->
-                    val rawName = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) cursor.getString(0) else null
-                    } ?: "Photo"
-                    val taken = takenMillis(resolver, uri).takeIf { it > 0L } ?: System.currentTimeMillis()
-                    val photo = resolver.openInputStream(uri)?.use { input ->
-                        vault.importStream(rawName.substringBeforeLast('.'), input, UUID.randomUUID().toString(), taken)
-                    } ?: return@mapNotNull null
-                    uri to photo
+                uriStrings.forEachIndexed { index, raw ->
+                    val uri = Uri.parse(raw)
+                    val photo = withContext(Dispatchers.IO) {
+                        val rawName = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) cursor.getString(0) else null
+                        } ?: "Photo"
+                        val taken = takenMillis(resolver, uri).takeIf { it > 0L } ?: System.currentTimeMillis()
+                        resolver.openInputStream(uri)?.use { input ->
+                            vault.importStream(rawName.substringBeforeLast('.'), input, UUID.randomUUID().toString(), taken)
+                        }
+                    }
+                    if (photo != null) {
+                        val next = all.value + photo
+                        all.value = next
+                        withContext(Dispatchers.IO) { vault.save(next) }
+                        imported += uri to photo
+                    }
+                    markTransfer(index + 1, uriStrings.size)
                 }
+            } finally {
+                closeTransfer()
             }
             if (imported.isEmpty()) {
                 onReady(ImportOutcome(null, 0, false))
                 return@launch
             }
-            all.value = all.value + imported.map { it.second }
-            vault.save(all.value)
             showIndex(start)
             val removal = withContext(Dispatchers.IO) { planRemoval(imported.map { it.first }) }
             deleteQueue = removal.rest
