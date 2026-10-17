@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,41 +70,49 @@ fun fingerprintAvailable(context: Context): Boolean {
     return strong == BiometricManager.BIOMETRIC_SUCCESS || strong == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED
 }
 
+val LocalHostActivity = staticCompositionLocalOf<FragmentActivity?> { null }
+
 private fun findActivity(context: Context): FragmentActivity? {
-    var current = context
-    while (current is ContextWrapper) {
+    var current: Context? = context
+    val seen = HashSet<Context>()
+    while (current is ContextWrapper && seen.add(current)) {
         if (current is FragmentActivity) return current
         current = current.baseContext
     }
     return null
 }
 
-fun promptFingerprint(context: Context, title: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
-    val activity = findActivity(context) ?: return onError("Couldn't open the fingerprint prompt")
-    val enrolled = BiometricManager.from(context).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
+fun promptFingerprint(activity: FragmentActivity, title: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+    val enrolled = BiometricManager.from(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_WEAK)
     if (enrolled == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) {
-        return onError("Add a fingerprint in system settings first")
+        val strong = BiometricManager.from(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+        if (strong == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) {
+            return onError("Add a fingerprint in system settings first")
+        }
     }
-    val prompt = BiometricPrompt(
-        activity,
-        ContextCompat.getMainExecutor(activity),
-        object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onSuccess()
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                if (errorCode != BiometricPrompt.ERROR_USER_CANCELED && errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
-                    onError(errString.toString())
+    try {
+        val prompt = BiometricPrompt(
+            activity,
+            ContextCompat.getMainExecutor(activity),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onSuccess()
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (errorCode != BiometricPrompt.ERROR_USER_CANCELED && errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                        onError(errString.toString())
+                    }
                 }
-            }
-        },
-    )
-    prompt.authenticate(
-        BiometricPrompt.PromptInfo.Builder()
-            .setTitle(title)
-            .setSubtitle("Use the fingerprint saved on this phone")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
-            .setNegativeButtonText("Cancel")
-            .build(),
-    )
+            },
+        )
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(title)
+                .setSubtitle("Use the fingerprint saved on this phone")
+                .setNegativeButtonText("Cancel")
+                .build(),
+        )
+    } catch (error: Exception) {
+        onError(error.message ?: "Couldn't open the fingerprint prompt")
+    }
 }
 
 @Composable
@@ -143,6 +152,7 @@ fun LockSetupPage(
     onSave: (email: String, password: String?, pin: String?, pattern: String?, finger: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
+    val activity = LocalHostActivity.current ?: findActivity(context)
     val ink = if (light) Color(0xFF2A2428) else Color.White
     val panel = if (light) Color(0xFFF7F4EF) else Color(0xFF12141A)
     val field = if (light) Color.White else Color(0xFF1C1E26)
@@ -213,7 +223,9 @@ fun LockSetupPage(
         }
         if (fingerOk) {
             MethodRow("Fingerprint", finger, ink, field) {
-                promptFingerprint(context, "Confirm fingerprint", { finger = true }, { error = it })
+                val host = activity
+                if (host == null) error = "Couldn't open the fingerprint prompt"
+                else promptFingerprint(host, "Confirm fingerprint", { finger = true }, { error = it })
             }
         } else {
             Text("Fingerprint is not available on this phone.", color = ink.copy(alpha = 0.45f), fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
@@ -239,6 +251,7 @@ fun LockGate(
     onSendCode: (onResult: (Boolean) -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    val activity = LocalHostActivity.current ?: findActivity(context)
     val ink = if (light) Color(0xFF2A2428) else Color.White
     val panel = if (light) Color(0xFFF7F4EF) else Color(0xFF12141A)
     val field = if (light) Color.White else Color(0xFF1C1E26)
@@ -304,7 +317,9 @@ fun LockGate(
             }
             method == LockStore.FINGER -> {
                 LockButton("Use fingerprint", LockPink, Color.White, Modifier.fillMaxWidth()) {
-                    promptFingerprint(context, "Unlock Nyte Gallery", onUnlocked) { error = it }
+                    val host = activity
+                    if (host == null) error = "Couldn't open the fingerprint prompt"
+                    else promptFingerprint(host, "Unlock Nyte Gallery", onUnlocked) { error = it }
                 }
             }
             method == LockStore.PATTERN -> {
