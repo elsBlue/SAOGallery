@@ -13,6 +13,7 @@ import android.provider.MediaStore
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.saogallery.TransferNotices
 import com.example.saogallery.data.GalleryPhoto
 import com.example.saogallery.data.VaultBackup
 import com.example.saogallery.data.VaultStore
@@ -49,6 +50,8 @@ data class ImportOutcome(
     val alreadyRemoved: Boolean,
 )
 
+data class TransferProgress(val label: String, val done: Int, val total: Int)
+
 data class RestoreOutcome(val added: Int, val skipped: Int, val problem: String?)
 
 private data class PreparedRestore(
@@ -70,6 +73,9 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     private val rotation = MutableStateFlow(0f)
     private var settleJob: Job? = null
     private var dragOrigin = 0f
+    private val _transfer = MutableStateFlow<TransferProgress?>(null)
+    val transfer: StateFlow<TransferProgress?> = _transfer
+    private var transferring = false
     private var deleteQueue: List<List<Uri>> = emptyList()
 
     init {
@@ -198,24 +204,32 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
             onDone(0)
             return
         }
+        if (!openTransfer("Restoring photos", targets.size)) return
         val activeId = before.getOrNull(activeIndexFor(rotation.value, before.size))?.id
+        settleJob?.cancel()
         viewModelScope.launch {
-            val exported = withContext(Dispatchers.IO) {
-                targets.mapNotNull { photo ->
-                    if (writePublic(photo)) photo.id else null
-                }.toSet()
-            }
-            if (exported.isNotEmpty()) {
-                settleJob?.cancel()
-                all.value.filter { it.id in exported }.forEach { vault.deleteFile(it) }
-                val next = all.value.filter { it.id !in exported }
-                all.value = next
-                vault.save(next)
-                val after = next.filter { it.trashedAt == null }
+            var exported = 0
+            try {
+                targets.forEachIndexed { index, photo ->
+                    val wrote = withContext(Dispatchers.IO) { writePublic(photo) }
+                    if (wrote) {
+                        val next = all.value.filter { it.id != photo.id }
+                        all.value = next
+                        withContext(Dispatchers.IO) {
+                            vault.save(next)
+                            vault.deleteFile(photo)
+                        }
+                        exported++
+                    }
+                    markTransfer(index + 1, targets.size)
+                }
+            } finally {
+                val after = all.value.filter { it.trashedAt == null }
                 val index = after.indexOfFirst { it.id == activeId }.let { if (it >= 0) it else 0 }
                 rotation.value = if (after.isEmpty()) 0f else index * (360f / after.size)
+                closeTransfer()
+                onDone(exported)
             }
-            onDone(exported.size)
         }
     }
 
@@ -374,70 +388,90 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun writeBackup(uriString: String, password: String, onDone: (Int) -> Unit) {
+        val photos = all.value.toList()
+        if (!openTransfer("Saving backup", photos.size)) return
         viewModelScope.launch {
-            val count = withContext(Dispatchers.IO) {
-                val app = getApplication<Application>()
-                val uri = Uri.parse(uriString)
-                val tmp = File.createTempFile("nyte-bak", ".part", app.cacheDir)
-                try {
-                    var written = 0
-                    RandomAccessFile(tmp, "rw").use { file ->
-                        VaultBackup.begin(password, file).use { writer ->
-                            all.value.forEach { photo ->
-                                val bytes = plainBytes(photo) ?: return@forEach
-                                writer.add(VaultBackup.Entry(photo.id, photo.name, photo.takenAt, photo.trashedAt, bytes))
-                                bytes.fill(0)
-                                written++
+            val count = try {
+                withContext(Dispatchers.IO) {
+                    val app = getApplication<Application>()
+                    val uri = Uri.parse(uriString)
+                    val tmp = File.createTempFile("nyte-bak", ".part", app.cacheDir)
+                    try {
+                        var written = 0
+                        RandomAccessFile(tmp, "rw").use { file ->
+                            VaultBackup.begin(password, file).use { writer ->
+                                photos.forEachIndexed { index, photo ->
+                                    val bytes = plainBytes(photo)
+                                    if (bytes != null) {
+                                        writer.add(VaultBackup.Entry(photo.id, photo.name, photo.takenAt, photo.trashedAt, bytes))
+                                        bytes.fill(0)
+                                        written++
+                                    }
+                                    markTransfer(index + 1, photos.size)
+                                }
                             }
                         }
+                        if (written == 0) return@withContext 0
+                        val out = app.contentResolver.openOutputStream(uri) ?: return@withContext -1
+                        out.use { stream -> tmp.inputStream().use { it.copyTo(stream) } }
+                        written
+                    } catch (_: Exception) {
+                        -1
+                    } finally {
+                        tmp.delete()
                     }
-                    if (written == 0) return@withContext 0
-                    val out = app.contentResolver.openOutputStream(uri) ?: return@withContext -1
-                    out.use { stream -> tmp.inputStream().use { it.copyTo(stream) } }
-                    written
-                } catch (_: Exception) {
-                    -1
-                } finally {
-                    tmp.delete()
                 }
+            } finally {
+                closeTransfer()
             }
             onDone(count)
         }
     }
 
     fun readBackup(uriString: String, password: String, onDone: (RestoreOutcome) -> Unit) {
+        if (!openTransfer("Restoring backup", 0)) return
         viewModelScope.launch {
-            val prepared = withContext(Dispatchers.IO) {
-                val app = getApplication<Application>()
-                val uri = Uri.parse(uriString)
-                val input = app.contentResolver.openInputStream(uri)
-                    ?: return@withContext PreparedRestore(emptyList(), 0, VaultBackup.ReadResult.Damaged(0), "Couldn't open that file")
-                val existing = all.value.map { it.id }.toMutableSet()
-                val added = mutableListOf<GalleryPhoto>()
-                var skipped = 0
-                val result = input.use { stream ->
-                    VaultBackup.restore(password, stream) { entry ->
-                        if (entry.id in existing) {
-                            skipped++
-                            return@restore
-                        }
-                        val photo = ByteArrayInputStream(entry.bytes).use { raw ->
-                            vault.importStream(entry.name, raw, entry.id, entry.takenAt)
-                        }?.let { saved ->
-                            if (entry.trashedAt != null) saved.copy(trashedAt = entry.trashedAt) else saved
-                        }
-                        if (photo != null) {
-                            existing += photo.id
-                            added += photo
+            val activeId = visible().getOrNull(activeIndexFor(rotation.value, visible().size))?.id
+            val prepared = try {
+                withContext(Dispatchers.IO) {
+                    val app = getApplication<Application>()
+                    val uri = Uri.parse(uriString)
+                    val input = app.contentResolver.openInputStream(uri)
+                        ?: return@withContext PreparedRestore(emptyList(), 0, VaultBackup.ReadResult.Damaged(0), "Couldn't open that file")
+                    val existing = all.value.map { it.id }.toMutableSet()
+                    val added = mutableListOf<GalleryPhoto>()
+                    var skipped = 0
+                    var seen = 0
+                    val result = input.use { stream ->
+                        VaultBackup.restore(password, stream, onCount = { total ->
+                            markTransfer(0, total, "Restoring backup")
+                        }) { entry ->
+                            seen++
+                            if (entry.id in existing) {
+                                skipped++
+                            } else {
+                                val photo = ByteArrayInputStream(entry.bytes).use { raw ->
+                                    vault.importStream(entry.name, raw, entry.id, entry.takenAt)
+                                }?.let { saved ->
+                                    if (entry.trashedAt != null) saved.copy(trashedAt = entry.trashedAt) else saved
+                                }
+                                if (photo != null) {
+                                    existing += photo.id
+                                    added += photo
+                                    val updated = all.value + photo
+                                    all.value = updated
+                                    vault.save(updated)
+                                }
+                            }
+                            markTransfer(seen, _transfer.value?.total ?: seen, "Restoring backup")
                         }
                     }
+                    PreparedRestore(added, skipped, result, null)
                 }
-                PreparedRestore(added, skipped, result, null)
+            } finally {
+                closeTransfer()
             }
             if (prepared.photos.isNotEmpty()) {
-                val activeId = visible().getOrNull(activeIndexFor(rotation.value, visible().size))?.id
-                all.value = all.value + prepared.photos
-                vault.save(all.value)
                 val after = all.value.filter { it.trashedAt == null }
                 val index = after.indexOfFirst { it.id == activeId }.let { if (it >= 0) it else 0 }
                 rotation.value = if (after.isEmpty()) 0f else index * (360f / after.size)
@@ -453,6 +487,25 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
             }
             onDone(outcome)
         }
+    }
+
+    private fun openTransfer(label: String, total: Int): Boolean {
+        if (transferring) return false
+        transferring = true
+        markTransfer(0, total, label)
+        return true
+    }
+
+    private fun markTransfer(done: Int, total: Int, label: String = _transfer.value?.label ?: "Nyte Gallery") {
+        val progress = TransferProgress(label, done, total)
+        _transfer.value = progress
+        TransferNotices.show(getApplication(), progress)
+    }
+
+    private fun closeTransfer() {
+        transferring = false
+        _transfer.value = null
+        TransferNotices.hide(getApplication())
     }
 
     @RequiresApi(29)

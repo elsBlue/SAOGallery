@@ -32,6 +32,7 @@ class MainActivity : FragmentActivity() {
                 SAOGalleryTheme {
                 val viewModel: GalleryViewModel = viewModel()
                 val state by viewModel.uiState.collectAsState()
+                val transfer by viewModel.transfer.collectAsState()
                 GalleryScreen(
                     state = state,
                     onDragStart = viewModel::onDragStart,
@@ -50,6 +51,7 @@ class MainActivity : FragmentActivity() {
                     onRestoreBackup = viewModel::readBackup,
                     trashExplained = viewModel::trashExplained,
                     onTrashExplained = viewModel::markTrashExplained,
+                    transfer = transfer,
                 )
                 }
             }

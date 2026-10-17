@@ -39,6 +39,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -71,6 +72,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -138,6 +141,7 @@ fun GalleryScreen(
     onRestoreBackup: (String, String, (RestoreOutcome) -> Unit) -> Unit,
     trashExplained: () -> Boolean,
     onTrashExplained: () -> Unit,
+    transfer: TransferProgress? = null,
 ) {
     val context = LocalContext.current
     val lockStore = remember { LockStore(context) }
@@ -255,6 +259,7 @@ fun GalleryScreen(
         }
     }
     val finishExport: (Set<String>) -> Unit = { ids ->
+        restoreOpen = false
         onExport(ids) { count ->
             val message = if (count > 0) {
                 "Restored to Pictures/Nyte Gallery"
@@ -295,8 +300,20 @@ fun GalleryScreen(
         }
     }
 
+    var askedNotify by remember { mutableStateOf(false) }
+    val askNotify = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(transfer != null) {
+        if (transfer != null && !askedNotify && Build.VERSION.SDK_INT >= 33) {
+            askedNotify = true
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                askNotify.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
     BackHandler(enabled = true) {
         when {
+            transfer != null -> Unit
             settingLock -> settingLock = false
             confirmingLock -> confirmingLock = false
             locked -> Unit
@@ -647,6 +664,10 @@ fun GalleryScreen(
                 },
             )
         }
+        val progress = transfer
+        if (progress != null) {
+            TransferDialog(progress)
+        }
         if (locked) {
             LockGate(
                 light = light,
@@ -743,6 +764,50 @@ private fun EmptyTrashOverlay(
 }
 
 @Composable
+private fun TransferDialog(progress: TransferProgress) {
+    val fraction = if (progress.total <= 0) 0f else progress.done.toFloat() / progress.total
+    val percent = if (progress.total <= 0) null else (progress.done * 100 / progress.total)
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false,
+        ),
+    ) {
+        Box(
+            Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                Modifier
+                    .padding(horizontal = 32.dp)
+                    .fillMaxWidth()
+                    .shadow(24.dp, RoundedCornerShape(24.dp))
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color(0xFF1C1E26))
+                    .padding(horizontal = 22.dp, vertical = 26.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                if (progress.total <= 0) {
+                    CircularProgressIndicator(color = DotA)
+                } else {
+                    CircularProgressIndicator(progress = { fraction }, color = DotA)
+                }
+                Spacer(Modifier.height(16.dp))
+                Text(progress.label, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (percent == null) "This can take a while" else "${progress.done} of ${progress.total} · $percent%",
+                    color = Color.White.copy(alpha = 0.72f),
+                    fontSize = 13.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun RestorePage(
     photos: List<GalleryPhoto>,
     light: Boolean,
@@ -775,6 +840,18 @@ private fun RestorePage(
                 letterSpacing = 2.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f),
+            )
+            val allIds = photos.map { it.id }.toSet()
+            val allOn = allIds.isNotEmpty() && allIds.all { it in selected }
+            Text(
+                if (allOn) "Clear" else "Select all",
+                color = ink.copy(alpha = if (photos.isEmpty()) 0.35f else 0.72f),
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .clickable(enabled = photos.isNotEmpty()) {
+                        selected = if (allOn) emptySet() else allIds
+                    }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
             )
             Text(
                 "Close",

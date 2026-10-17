@@ -149,6 +149,22 @@ fun DeviceImportPage(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Move into Nyte", color = ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            val scopeIds = if (mode == "folder" && openFolder != null) {
+                visible.map { it.uri.toString() }
+            } else {
+                photos.map { it.uri.toString() }
+            }
+            val allOn = scopeIds.isNotEmpty() && scopeIds.all { it in selected }
+            if (photos.isNotEmpty()) {
+                Text(
+                    if (allOn) "Clear" else "Select all",
+                    color = ink.copy(alpha = 0.7f),
+                    fontSize = 14.sp,
+                    modifier = Modifier.clickable {
+                        selected = if (allOn) selected - scopeIds.toSet() else selected + scopeIds
+                    }.padding(8.dp),
+                )
+            }
             Text("Close", color = ink.copy(alpha = 0.7f), modifier = Modifier.clickable(onClick = onClose).padding(8.dp))
         }
         Text(

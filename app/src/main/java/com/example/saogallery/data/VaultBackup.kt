@@ -79,7 +79,12 @@ object VaultBackup {
         }
     }
 
-    fun restore(password: String, input: InputStream, onEntry: (Entry) -> Unit): ReadResult {
+    fun restore(
+        password: String,
+        input: InputStream,
+        onCount: (Int) -> Unit = {},
+        onEntry: (Entry) -> Unit,
+    ): ReadResult {
         val header = ByteArray(HEADER)
         if (!input.readExact(header)) return ReadResult.Damaged(0)
         if (!header.copyOfRange(0, 8).contentEquals(MAGIC) || header[8] != 1.toByte() || header[9] != 1.toByte()) {
@@ -94,6 +99,7 @@ object VaultBackup {
         val count = view.readInt()
         if (count !in 0..100_000) return ReadResult.Damaged(0)
         val key = derive(password, salt, iterations)
+        onCount(count)
         try {
             val data = DataInputStream(input)
             var added = 0
