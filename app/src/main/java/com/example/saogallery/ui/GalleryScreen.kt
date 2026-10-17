@@ -218,22 +218,23 @@ fun GalleryScreen(
         }
     }
 
-    val bg = if (light) {
-        Brush.verticalGradient(listOf(Color(0xFFFBF9F6), Color(0xFFE7E1D8)))
+    val wash = if (light) {
+        Brush.verticalGradient(listOf(Color(0xB8FBF9F6), Color(0x9EE7E1D8)))
     } else {
-        Brush.verticalGradient(listOf(Color(0xFF23262E), Color(0xFF12141A), Color(0xFF0D0E12)))
+        Brush.verticalGradient(listOf(Color(0xB823262E), Color(0x8012141A), Color(0xC70D0E12)))
     }
     val ink = if (light) Color(0xFF2A2428) else Color.White
     val chrome = if (light) Color.White else Color(0xFF1C1E26)
     val chromeInk = if (light) Color(0xFF2A2428) else Color.White
 
-    Box(Modifier.fillMaxSize().background(bg)) {
+    Box(Modifier.fillMaxSize().background(if (light) Color(0xFFFBF9F6) else Color(0xFF12141A))) {
         Image(
             painter = painterResource(if (light) R.drawable.bg_light else R.drawable.bg_dark),
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().alpha(0.4f),
+            modifier = Modifier.fillMaxSize().alpha(if (light) 0.2f else 0.4f),
         )
+        Box(Modifier.fillMaxSize().background(wash))
         Column(Modifier.fillMaxSize()) {
             Box(
                 Modifier
