@@ -404,17 +404,17 @@ fun GalleryScreen(
                     container = chrome,
                     icon = chromeInk,
                     modifier = Modifier,
+                    onClick = { light = !light },
+                ) { SunMoonIcon(light = light) }
+                ChromeButton(
+                    container = chrome,
+                    icon = chromeInk,
+                    modifier = Modifier,
                     onClick = {
                         backupError = null
                         menuOpen = true
                     },
                 ) { MenuGlyph() }
-                ChromeButton(
-                    container = chrome,
-                    icon = chromeInk,
-                    modifier = Modifier,
-                    onClick = { light = !light },
-                ) { SunMoonIcon(light = light) }
             }
         } else {
             ChromeButton(
