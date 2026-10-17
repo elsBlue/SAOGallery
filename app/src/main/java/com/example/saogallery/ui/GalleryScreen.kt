@@ -133,6 +133,8 @@ fun GalleryScreen(
     onRestore: (String) -> Unit,
     onEmptyTrash: () -> Unit,
     onExport: (Set<String>, (Int) -> Unit) -> Unit,
+    onBackup: (String, String, (Int) -> Unit) -> Unit,
+    onRestoreBackup: (String, String, (RestoreOutcome) -> Unit) -> Unit,
     trashExplained: () -> Boolean,
     onTrashExplained: () -> Unit,
 ) {
@@ -151,6 +153,11 @@ fun GalleryScreen(
     var restoreOpen by remember { mutableStateOf(false) }
     var emptyingTrash by remember { mutableStateOf(false) }
     var choosingDevice by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var backupOpen by remember { mutableStateOf(false) }
+    var importBackup by remember { mutableStateOf(false) }
+    var backupBusy by remember { mutableStateOf(false) }
+    var backupError by remember { mutableStateOf<String?>(null) }
     var pendingExportIds by remember { mutableStateOf(emptySet<String>()) }
     var draft by remember { mutableStateOf("") }
     val view = LocalView.current
@@ -187,6 +194,48 @@ fun GalleryScreen(
     val photoAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
         if (granted.values.any { it }) choosingDevice = true
         else Toast.makeText(context, "Photo access is needed to move images out of your gallery", Toast.LENGTH_SHORT).show()
+    }
+    var pendingBackupPassword by remember { mutableStateOf<String?>(null) }
+    val openBackupFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val secret = pendingBackupPassword
+        pendingBackupPassword = null
+        if (uri == null || secret.isNullOrEmpty()) {
+            backupBusy = false
+            return@rememberLauncherForActivityResult
+        }
+        backupBusy = true
+        onRestoreBackup(uri.toString(), secret) { outcome ->
+            backupBusy = false
+            if (outcome.problem == null) {
+                val extra = if (outcome.skipped > 0) " ${outcome.skipped} already here." else ""
+                Toast.makeText(context, "Restored ${outcome.added} photos.$extra", Toast.LENGTH_LONG).show()
+                importBackup = false
+                backupError = null
+            } else {
+                backupError = outcome.problem
+            }
+        }
+    }
+    val createBackupFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val secret = pendingBackupPassword
+        pendingBackupPassword = null
+        if (uri == null || secret.isNullOrEmpty()) {
+            backupBusy = false
+            return@rememberLauncherForActivityResult
+        }
+        backupBusy = true
+        onBackup(uri.toString(), secret) { count ->
+            backupBusy = false
+            when {
+                count > 0 -> {
+                    Toast.makeText(context, "Backup saved. Keep that password. Nyte cannot recover it.", Toast.LENGTH_LONG).show()
+                    backupOpen = false
+                    backupError = null
+                }
+                count == 0 -> backupError = "Nothing to back up yet"
+                else -> backupError = "Couldn't write that backup"
+            }
+        }
     }
     val openPicker = {
         if (hasPhotoAccess(context)) choosingDevice = true else photoAccess.launch(photoPermissions())
@@ -229,6 +278,14 @@ fun GalleryScreen(
         }
     }
 
+    LaunchedEffect(locked) {
+        if (locked) {
+            menuOpen = false
+            backupOpen = false
+            importBackup = false
+        }
+    }
+
     LaunchedEffect(state.photos.isEmpty()) {
         if (state.photos.isEmpty()) {
             galleryOpen = false
@@ -236,11 +293,14 @@ fun GalleryScreen(
         }
     }
 
-    BackHandler(enabled = locked || settingLock || confirmingLock || choosingDevice || viewing || editing || explainingTrash || emptyingTrash || restoreOpen || trashOpen || galleryOpen) {
+    BackHandler(enabled = locked || settingLock || confirmingLock || choosingDevice || viewing || editing || explainingTrash || emptyingTrash || restoreOpen || trashOpen || galleryOpen || menuOpen || backupOpen || importBackup) {
         when {
             settingLock -> settingLock = false
             confirmingLock -> confirmingLock = false
             locked -> Unit
+            backupOpen -> if (!backupBusy) backupOpen = false
+            importBackup -> if (!backupBusy) importBackup = false
+            menuOpen -> menuOpen = false
             choosingDevice -> choosingDevice = false
             viewing -> viewing = false
             editing -> editing = false
@@ -332,15 +392,41 @@ fun GalleryScreen(
             onClick = { confirmingLock = true },
         ) { LockGlyph() }
 
-        ChromeButton(
-            container = chrome,
-            icon = chromeInk,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .windowInsetsPadding(WindowInsets.systemBars)
-                .padding(top = 12.dp, end = 12.dp),
-            onClick = { light = !light },
-        ) { SunMoonIcon(light = light) }
+        if (!locked) {
+            Row(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(top = 12.dp, end = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                ChromeButton(
+                    container = chrome,
+                    icon = chromeInk,
+                    modifier = Modifier,
+                    onClick = {
+                        backupError = null
+                        menuOpen = true
+                    },
+                ) { MenuGlyph() }
+                ChromeButton(
+                    container = chrome,
+                    icon = chromeInk,
+                    modifier = Modifier,
+                    onClick = { light = !light },
+                ) { SunMoonIcon(light = light) }
+            }
+        } else {
+            ChromeButton(
+                container = chrome,
+                icon = chromeInk,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(top = 12.dp, end = 12.dp),
+                onClick = { light = !light },
+            ) { SunMoonIcon(light = light) }
+        }
 
         Row(
             Modifier
@@ -505,6 +591,48 @@ fun GalleryScreen(
                     lockStore.save(email, password, pin, pattern, finger)
                     settingLock = false
                     locked = true
+                },
+            )
+        }
+        if (menuOpen && !locked) {
+            MenuSidebar(
+                light = light,
+                onClose = { menuOpen = false },
+                onBackup = {
+                    backupError = null
+                    menuOpen = false
+                    backupOpen = true
+                },
+                onRestore = {
+                    backupError = null
+                    menuOpen = false
+                    importBackup = true
+                },
+            )
+        }
+        if (backupOpen && !locked) {
+            BackupPage(
+                light = light,
+                busy = backupBusy,
+                error = backupError,
+                onClose = { if (!backupBusy) backupOpen = false },
+                onCreate = { secret ->
+                    pendingBackupPassword = secret
+                    backupError = null
+                    createBackupFile.launch("nyte-backup.nybak")
+                },
+            )
+        }
+        if (importBackup && !locked) {
+            RestoreBackupPage(
+                light = light,
+                busy = backupBusy,
+                error = backupError,
+                onClose = { if (!backupBusy) importBackup = false },
+                onPick = { secret ->
+                    pendingBackupPassword = secret
+                    backupError = null
+                    openBackupFile.launch(arrayOf("application/octet-stream", "application/*", "*/*"))
                 },
             )
         }

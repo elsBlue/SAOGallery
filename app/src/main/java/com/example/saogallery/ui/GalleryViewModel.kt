@@ -14,6 +14,7 @@ import androidx.annotation.RequiresApi
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.saogallery.data.GalleryPhoto
+import com.example.saogallery.data.VaultBackup
 import com.example.saogallery.data.VaultStore
 import com.example.saogallery.data.captureMillis
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.RandomAccessFile
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -43,6 +47,15 @@ data class ImportOutcome(
     val consent: IntentSender?,
     val imported: Int,
     val alreadyRemoved: Boolean,
+)
+
+data class RestoreOutcome(val added: Int, val skipped: Int, val problem: String?)
+
+private data class PreparedRestore(
+    val photos: List<GalleryPhoto>,
+    val skipped: Int,
+    val result: VaultBackup.ReadResult,
+    val note: String?,
 )
 
 sealed class DeleteStep {
@@ -243,6 +256,11 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
+    private fun plainBytes(photo: GalleryPhoto): ByteArray? {
+        if (photo.vaultFile != null) return vault.read(photo)
+        return bundledBytes(photo)
+    }
+
     private fun bundledBytes(photo: GalleryPhoto): ByteArray? {
         if (photo.imageRes == 0) return null
         val bitmap = BitmapFactory.decodeResource(getApplication<Application>().resources, photo.imageRes) ?: return null
@@ -351,6 +369,88 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearDeleteQueue() {
         deleteQueue = emptyList()
+    }
+
+    fun writeBackup(uriString: String, password: String, onDone: (Int) -> Unit) {
+        viewModelScope.launch {
+            val count = withContext(Dispatchers.IO) {
+                val app = getApplication<Application>()
+                val uri = Uri.parse(uriString)
+                val tmp = File.createTempFile("nyte-bak", ".part", app.cacheDir)
+                try {
+                    var written = 0
+                    RandomAccessFile(tmp, "rw").use { file ->
+                        VaultBackup.begin(password, file).use { writer ->
+                            all.value.forEach { photo ->
+                                val bytes = plainBytes(photo) ?: return@forEach
+                                writer.add(VaultBackup.Entry(photo.id, photo.name, photo.takenAt, photo.trashedAt, bytes))
+                                bytes.fill(0)
+                                written++
+                            }
+                        }
+                    }
+                    if (written == 0) return@withContext 0
+                    val out = app.contentResolver.openOutputStream(uri) ?: return@withContext -1
+                    out.use { stream -> tmp.inputStream().use { it.copyTo(stream) } }
+                    written
+                } catch (_: Exception) {
+                    -1
+                } finally {
+                    tmp.delete()
+                }
+            }
+            onDone(count)
+        }
+    }
+
+    fun readBackup(uriString: String, password: String, onDone: (RestoreOutcome) -> Unit) {
+        viewModelScope.launch {
+            val prepared = withContext(Dispatchers.IO) {
+                val app = getApplication<Application>()
+                val uri = Uri.parse(uriString)
+                val input = app.contentResolver.openInputStream(uri)
+                    ?: return@withContext PreparedRestore(emptyList(), 0, VaultBackup.ReadResult.Damaged(0), "Couldn't open that file")
+                val existing = all.value.map { it.id }.toMutableSet()
+                val added = mutableListOf<GalleryPhoto>()
+                var skipped = 0
+                val result = input.use { stream ->
+                    VaultBackup.restore(password, stream) { entry ->
+                        if (entry.id in existing) {
+                            skipped++
+                            return@restore
+                        }
+                        val photo = ByteArrayInputStream(entry.bytes).use { raw ->
+                            vault.importStream(entry.name, raw, entry.id, entry.takenAt)
+                        }?.let { saved ->
+                            if (entry.trashedAt != null) saved.copy(trashedAt = entry.trashedAt) else saved
+                        }
+                        if (photo != null) {
+                            existing += photo.id
+                            added += photo
+                        }
+                    }
+                }
+                PreparedRestore(added, skipped, result, null)
+            }
+            if (prepared.photos.isNotEmpty()) {
+                val activeId = visible().getOrNull(activeIndexFor(rotation.value, visible().size))?.id
+                all.value = all.value + prepared.photos
+                vault.save(all.value)
+                val after = all.value.filter { it.trashedAt == null }
+                val index = after.indexOfFirst { it.id == activeId }.let { if (it >= 0) it else 0 }
+                rotation.value = if (after.isEmpty()) 0f else index * (360f / after.size)
+            }
+            val outcome = when (val result = prepared.result) {
+                is VaultBackup.ReadResult.Ok -> RestoreOutcome(prepared.photos.size, prepared.skipped, prepared.note)
+                VaultBackup.ReadResult.BadPassword -> RestoreOutcome(0, 0, "That password does not match this backup")
+                is VaultBackup.ReadResult.Damaged -> RestoreOutcome(
+                    prepared.photos.size,
+                    prepared.skipped,
+                    prepared.note ?: if (prepared.photos.isEmpty()) "That file is not a Nyte backup" else "Backup file is damaged. Restored ${prepared.photos.size} before it stopped",
+                )
+            }
+            onDone(outcome)
+        }
     }
 
     @RequiresApi(29)

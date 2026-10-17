@@ -9,7 +9,7 @@ Galeri foto Android (Kotlin + Jetpack Compose) bernama Nyte Gallery, dengan jend
 - Tombol galeri di kanan bawah, senada dengan tombol tema.
 - Panel galeri membelah layar: kartu di atas, daftar 4 kolom di bawah. Ketuk foto untuk memindahkan kartu.
 - Nama panjang dipotong dengan `...` di kartu dan di label bawah.
-- Tombol Add Images membuka Move into Nyte: pilih foto dari HP per semua gambar atau per folder album, lalu foto dienkripsi ke dalam aplikasi.
+- Tombol titik tiga di samping mode terang/gelap membuka menu. Backup membuat berkas terenkripsi kata sandi (bukan kunci ponsel) yang bisa disimpan di Drive, komputer, atau kartu memori. Restore mengembalikan berkas itu.
 - Hapus memindahkan foto ke Trash. Pertama kali, aplikasi menjelaskan bahwa Trash terhapus otomatis setelah 30 hari dan bisa dikembalikan. Tombol Trash muncul di kiri tombol daftar jika ada isinya.
 - Tombol kembali menutup daftar atau Trash, bukan aplikasinya.
 - MVVM ringan: `GalleryRepository` → `GalleryViewModel` → `GalleryScreen`.
