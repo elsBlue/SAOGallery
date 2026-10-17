@@ -232,7 +232,7 @@ fun GalleryScreen(
             painter = painterResource(if (light) R.drawable.bg_light else R.drawable.bg_dark),
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().alpha(if (light) 0.2f else 0.4f),
+            modifier = Modifier.fillMaxSize().alpha(0.5f),
         )
         Box(Modifier.fillMaxSize().background(wash))
         Column(Modifier.fillMaxSize()) {
