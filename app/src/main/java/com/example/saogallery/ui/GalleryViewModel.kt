@@ -1,8 +1,13 @@
 package com.example.saogallery.ui
 
 import android.app.Application
+import android.content.ContentValues
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.saogallery.data.GalleryPhoto
@@ -19,6 +24,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -144,6 +150,78 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         val index = after.indexOfFirst { it.id == id }
         if (index >= 0 && after.isNotEmpty()) {
             rotation.value = index * (360f / after.size)
+        }
+    }
+
+    fun emptyTrash() {
+        val trashed = all.value.filter { it.trashedAt != null }
+        trashed.forEach { vault.deleteFile(it) }
+        all.value = all.value.filter { it.trashedAt == null }
+        vault.save(all.value)
+    }
+
+    fun exportToPublic(ids: Set<String>, onDone: (Int) -> Unit) {
+        val before = visible()
+        val targets = before.filter { it.id in ids }
+        if (targets.isEmpty()) {
+            onDone(0)
+            return
+        }
+        val activeId = before.getOrNull(activeIndexFor(rotation.value, before.size))?.id
+        viewModelScope.launch {
+            val exported = withContext(Dispatchers.IO) {
+                targets.mapNotNull { photo ->
+                    val bytes = photoBytes(photo) ?: return@mapNotNull null
+                    if (writePublic(photo, bytes)) photo.id else null
+                }.toSet()
+            }
+            if (exported.isNotEmpty()) {
+                settleJob?.cancel()
+                all.value.filter { it.id in exported }.forEach { vault.deleteFile(it) }
+                val next = all.value.filter { it.id !in exported }
+                all.value = next
+                vault.save(next)
+                val after = next.filter { it.trashedAt == null }
+                val index = after.indexOfFirst { it.id == activeId }.let { if (it >= 0) it else 0 }
+                rotation.value = if (after.isEmpty()) 0f else index * (360f / after.size)
+            }
+            onDone(exported.size)
+        }
+    }
+
+    private fun photoBytes(photo: GalleryPhoto): ByteArray? {
+        if (photo.vaultFile != null) return vault.read(photo)
+        if (photo.imageRes == 0) return null
+        val bitmap = BitmapFactory.decodeResource(getApplication<Application>().resources, photo.imageRes) ?: return null
+        return ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out)
+            if (!bitmap.isRecycled) bitmap.recycle()
+            out.toByteArray()
+        }
+    }
+
+    private fun writePublic(photo: GalleryPhoto, bytes: ByteArray): Boolean {
+        return try {
+            val resolver = getApplication<Application>().contentResolver
+            val safe = photo.name.replace(Regex("[^A-Za-z0-9 _-]"), "").trim().take(40).ifBlank { "Nyte" }
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "$safe-${photo.id.take(6)}.jpg")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= 29) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Nyte Gallery")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+            resolver.openOutputStream(uri)?.use { it.write(bytes) } ?: return false
+            if (Build.VERSION.SDK_INT >= 29) {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            }
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 

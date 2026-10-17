@@ -39,6 +39,8 @@ class MainActivity : ComponentActivity() {
                     onRename = viewModel::rename,
                     onTrash = viewModel::moveToTrash,
                     onRestore = viewModel::restore,
+                    onEmptyTrash = viewModel::emptyTrash,
+                    onExport = viewModel::exportToPublic,
                     trashExplained = viewModel::trashExplained,
                     onTrashExplained = viewModel::markTrashExplained,
                 )

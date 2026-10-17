@@ -1,6 +1,10 @@
 package com.example.saogallery.ui
 
 import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.widget.Toast
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -66,6 +70,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.graphics.ClipOp
@@ -118,6 +123,8 @@ fun GalleryScreen(
     onRename: (Int, String) -> Unit,
     onTrash: (Int) -> Unit,
     onRestore: (String) -> Unit,
+    onEmptyTrash: () -> Unit,
+    onExport: (Set<String>, (Int) -> Unit) -> Unit,
     trashExplained: () -> Boolean,
     onTrashExplained: () -> Unit,
 ) {
@@ -128,6 +135,9 @@ fun GalleryScreen(
     var editing by remember { mutableStateOf(false) }
     var explainingTrash by remember { mutableStateOf(false) }
     var viewing by remember { mutableStateOf(false) }
+    var restoreOpen by remember { mutableStateOf(false) }
+    var emptyingTrash by remember { mutableStateOf(false) }
+    var pendingExportIds by remember { mutableStateOf(emptySet<String>()) }
     var draft by remember { mutableStateOf("") }
     val view = LocalView.current
     androidx.compose.runtime.SideEffect {
@@ -161,12 +171,46 @@ fun GalleryScreen(
             if (trashExplained()) onTrash(state.activeIndex) else explainingTrash = true
         }
     }
+    val finishExport: (Set<String>) -> Unit = { ids ->
+        onExport(ids) { count ->
+            val message = if (count > 0) {
+                "Restored to Pictures/Nyte Gallery"
+            } else {
+                "Couldn't restore those photos"
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+    val writePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) finishExport(pendingExportIds) else Toast.makeText(context, "Storage permission is needed to restore photos", Toast.LENGTH_SHORT).show()
+    }
+    val beginExport: (Set<String>) -> Unit = { ids ->
+        if (ids.isNotEmpty()) {
+            val needsPermission = Build.VERSION.SDK_INT <= 28 &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+            if (needsPermission) {
+                pendingExportIds = ids
+                writePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            } else {
+                finishExport(ids)
+            }
+        }
+    }
 
-    BackHandler(enabled = viewing || editing || explainingTrash || trashOpen || galleryOpen) {
+    LaunchedEffect(state.photos.isEmpty()) {
+        if (state.photos.isEmpty()) {
+            galleryOpen = false
+            restoreOpen = false
+        }
+    }
+
+    BackHandler(enabled = viewing || editing || explainingTrash || emptyingTrash || restoreOpen || trashOpen || galleryOpen) {
         when {
             viewing -> viewing = false
             editing -> editing = false
             explainingTrash -> explainingTrash = false
+            emptyingTrash -> emptyingTrash = false
+            restoreOpen -> restoreOpen = false
             trashOpen -> trashOpen = false
             else -> galleryOpen = false
         }
@@ -220,6 +264,7 @@ fun GalleryScreen(
                     photos = state.trash,
                     light = light,
                     onRestore = onRestore,
+                    onEmpty = { emptyingTrash = true },
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             } else if (galleryOpen) {
@@ -263,25 +308,46 @@ fun GalleryScreen(
                     },
                 ) { TrashGlyph() }
             }
-            ChromeButton(
-                container = chrome,
-                icon = chromeInk,
-                modifier = Modifier,
-                onClick = {
-                    trashOpen = false
-                    galleryOpen = !galleryOpen
-                },
-            ) { GalleryGlyph() }
+            if (state.photos.isNotEmpty()) {
+                ChromeButton(
+                    container = chrome,
+                    icon = chromeInk,
+                    modifier = Modifier,
+                    onClick = {
+                        trashOpen = false
+                        galleryOpen = !galleryOpen
+                    },
+                ) { GalleryGlyph() }
+            }
         }
 
+        if (state.photos.isNotEmpty()) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(start = 12.dp, bottom = 12.dp)
+                    .height(44.dp)
+                    .shadow(8.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(chrome)
+                    .clickable { restoreOpen = true }
+                    .padding(horizontal = 16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Restore", color = chromeInk, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        val addAtBottom = state.photos.isNotEmpty() || (trashOpen && state.trash.isNotEmpty())
         Row(
-            (if (state.photos.isEmpty()) {
-                Modifier.align(Alignment.Center)
-            } else {
+            (if (addAtBottom) {
                 Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.systemBars)
                     .padding(bottom = 12.dp)
+            } else {
+                Modifier.align(Alignment.Center)
             })
                 .height(44.dp)
                 .shadow(8.dp, CircleShape)
@@ -321,9 +387,221 @@ fun GalleryScreen(
                 },
             )
         }
+        if (emptyingTrash) {
+            EmptyTrashOverlay(
+                light = light,
+                onDismiss = { emptyingTrash = false },
+                onConfirm = {
+                    onEmptyTrash()
+                    emptyingTrash = false
+                    trashOpen = false
+                },
+            )
+        }
+        if (restoreOpen) {
+            RestorePage(
+                photos = state.photos,
+                light = light,
+                onClose = { restoreOpen = false },
+                onExport = beginExport,
+            )
+        }
         val openPhoto = state.photos.getOrNull(state.activeIndex)
         if (viewing && openPhoto != null) {
             FullView(photo = openPhoto, onClose = { viewing = false })
+        }
+    }
+}
+
+@Composable
+private fun EmptyTrashOverlay(
+    light: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val panel = if (light) Color(0xFFF7F3EE) else Color(0xFF1C1E26)
+    val ink = if (light) Color(0xFF2A2428) else Color.White
+    val field = if (light) Color(0xFFFBF9F6) else Color(0xFF12141A)
+    var typed by remember { mutableStateOf("") }
+    val ready = typed.trim().equals("delete", ignoreCase = true)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .zIndex(70f)
+            .background(Color.Black.copy(alpha = 0.56f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 28.dp)
+                .fillMaxWidth()
+                .shadow(24.dp, RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(24.dp))
+                .background(panel)
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+                .padding(horizontal = 20.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("EMPTY TRASH", color = ink, fontSize = 13.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "This permanently deletes every photo in Trash. Type delete, then press OK.",
+                color = ink.copy(alpha = 0.82f),
+                fontSize = 15.sp,
+                lineHeight = 21.sp,
+            )
+            Spacer(Modifier.height(16.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(field)
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (typed.isEmpty()) {
+                    Text("delete", color = ink.copy(alpha = 0.35f), fontSize = 16.sp)
+                }
+                BasicTextField(
+                    value = typed,
+                    onValueChange = { typed = it },
+                    singleLine = true,
+                    textStyle = TextStyle(color = ink, fontSize = 16.sp),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(DotA),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            Box(
+                Modifier
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(if (ready) DotA else ink.copy(alpha = 0.16f))
+                    .clickable(enabled = ready, onClick = onConfirm)
+                    .padding(horizontal = 28.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("OK", color = if (ready) Color.White else ink.copy(alpha = 0.4f), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RestorePage(
+    photos: List<GalleryPhoto>,
+    light: Boolean,
+    onClose: () -> Unit,
+    onExport: (Set<String>) -> Unit,
+) {
+    val ink = if (light) Color(0xFF2A2428) else Color.White
+    val panel = if (light) Color(0xFFF7F4EF) else Color(0xFF12141A)
+    var selected by remember { mutableStateOf(setOf<String>()) }
+    LaunchedEffect(photos) {
+        val ids = photos.map { it.id }.toSet()
+        selected = selected.intersect(ids)
+    }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .zIndex(60f)
+            .background(panel)
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "RESTORE",
+                color = ink,
+                fontSize = 13.sp,
+                letterSpacing = 2.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "Close",
+                color = ink.copy(alpha = 0.72f),
+                fontSize = 14.sp,
+                modifier = Modifier.clickable(onClick = onClose).padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+        }
+        Text(
+            "Restoring writes these photos back onto this phone, in Pictures/Nyte Gallery. Other apps can open them, and they leave Nyte Gallery.",
+            color = ink.copy(alpha = 0.78f),
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(4),
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            itemsIndexed(photos, key = { _, photo -> photo.id }) { _, photo ->
+                val on = photo.id in selected
+                Box(
+                    Modifier
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFD9D3CC))
+                        .clickable { selected = if (on) selected - photo.id else selected + photo.id },
+                ) {
+                    PhotoImage(photo, Modifier.fillMaxSize())
+                    if (on) {
+                        Box(Modifier.fillMaxSize().background(Color(0x552F9B68)))
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(4.dp)
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(AddGreen),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("✓", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            val ready = selected.isNotEmpty()
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(if (ready) AddGreen else ink.copy(alpha = 0.15f))
+                    .clickable(enabled = ready) { onExport(selected) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "Restore Selected",
+                    color = if (ready) Color.White else ink.copy(alpha = 0.4f),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                )
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(AddGreen)
+                    .clickable { onExport(photos.map { it.id }.toSet()) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Restore All", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
         }
     }
 }
@@ -709,16 +987,34 @@ private fun TrashGrid(
     photos: List<GalleryPhoto>,
     light: Boolean,
     onRestore: (String) -> Unit,
+    onEmpty: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val ink = if (light) Color(0xFF2A2428) else Color.White
     Column(modifier.background(if (light) Color(0xFFF7F4EF) else Color(0xFF0C0D11))) {
-        Text(
-            "Trash · deleted automatically after 30 days",
-            color = ink.copy(alpha = 0.7f),
-            fontSize = 12.sp,
-            modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 4.dp),
-        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Trash · deleted automatically after 30 days",
+                color = ink.copy(alpha = 0.7f),
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "Empty",
+                color = DotA,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(onClick = onEmpty)
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+        }
         LazyVerticalGrid(
             columns = GridCells.Fixed(4),
             modifier = Modifier.fillMaxSize().padding(6.dp),
