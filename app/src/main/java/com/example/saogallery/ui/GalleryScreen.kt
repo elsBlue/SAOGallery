@@ -365,7 +365,17 @@ private fun Stage(
                         .zIndex(30f),
                     horizontalArrangement = Arrangement.spacedBy(22.dp),
                 ) {
-                    ActionChip(ink, onDelete) { TrashGlyph() }
+                    Box(
+                        Modifier
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(21.dp))
+                            .background(DotA)
+                            .clickable(onClick = onDelete)
+                            .padding(horizontal = 16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("delete", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
                     ActionChip(ink, onEdit) { PencilIcon(ink) }
                 }
             }
