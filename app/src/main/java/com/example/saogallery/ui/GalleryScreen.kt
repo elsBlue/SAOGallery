@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
@@ -78,6 +79,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import com.example.saogallery.R
 import com.example.saogallery.data.GalleryPhoto
 import com.example.saogallery.data.VaultStore
 import com.example.saogallery.data.formatTaken
@@ -226,6 +228,12 @@ fun GalleryScreen(
     val chromeInk = if (light) Color(0xFF2A2428) else Color.White
 
     Box(Modifier.fillMaxSize().background(bg)) {
+        Image(
+            painter = painterResource(if (light) R.drawable.bg_light else R.drawable.bg_dark),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().alpha(0.4f),
+        )
         Column(Modifier.fillMaxSize()) {
             Box(
                 Modifier
