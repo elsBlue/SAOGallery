@@ -241,9 +241,9 @@ private fun Fan(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val cardWidth = maxWidth * if (compact) 0.54f else 0.58f
+        val cardWidth = maxWidth * 0.72f
         val cardHeight = cardWidth * 1.32f
-        val spread = with(density) { (maxWidth * if (compact) 0.27f else 0.32f).toPx() }
+        val spread = with(density) { (maxWidth * 0.22f).toPx() }
         val count = photos.size
         val step = if (count == 0) 360f else 360f / count
         val center = if (count == 0) 0f else rotation / step
@@ -257,10 +257,10 @@ private fun Fan(
             Triple(index, photo, delta)
         }.filter { abs(it.third) < 1.7f }
         visible.forEach { (index, photo, delta) ->
-            val rel = delta * 28f
+            val rel = delta * 18f
             val dist = abs(delta)
-            val scale = 0.74f + (1f - dist.coerceAtMost(1f)) * 0.26f
-            val boost = if (index == activeIndex) 1.03f else 1f
+            val scale = 0.88f + (1f - dist.coerceAtMost(1f)) * 0.12f
+            val boost = if (index == activeIndex) 1.02f else 1f
             val fade = if (dist <= 1f) 1f else (1f - (dist - 1f) / 0.65f).coerceIn(0f, 1f)
             PortraitWindow(
                 photo = photo,
@@ -273,7 +273,7 @@ private fun Fan(
                     .graphicsLayer {
                         translationX = delta * spread
                         translationY = dist * 12.dp.toPx()
-                        rotationY = (-rel).coerceIn(-36f, 36f)
+                        rotationY = (-rel).coerceIn(-22f, 22f)
                         scaleX = scale * boost
                         scaleY = scale * boost
                         alpha = fade
