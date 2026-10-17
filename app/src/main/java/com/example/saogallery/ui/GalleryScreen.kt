@@ -289,14 +289,23 @@ fun GalleryScreen(
         }
 
         if (state.photos.isNotEmpty()) {
-            AddButton(
-                size = 44.dp,
-                onClick = openPicker,
-                modifier = Modifier
+            Row(
+                Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.systemBars)
-                    .padding(bottom = 12.dp),
-            )
+                    .padding(bottom = 12.dp)
+                    .height(44.dp)
+                    .shadow(8.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(AddGreen)
+                    .clickable(onClick = openPicker)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(Modifier.size(16.dp)) { PlusMark() }
+                Text("Add Images", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
         }
 
         if (editing) {
@@ -827,26 +836,31 @@ private fun AddButton(size: Dp, onClick: () -> Unit, modifier: Modifier = Modifi
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
-                width = this.size.minDimension * 0.045f,
-                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-            )
-            drawLine(
-                Color.White,
-                Offset(this.size.width * 0.28f, this.size.height / 2f),
-                Offset(this.size.width * 0.72f, this.size.height / 2f),
-                stroke.width,
-                androidx.compose.ui.graphics.StrokeCap.Round,
-            )
-            drawLine(
-                Color.White,
-                Offset(this.size.width / 2f, this.size.height * 0.28f),
-                Offset(this.size.width / 2f, this.size.height * 0.72f),
-                stroke.width,
-                androidx.compose.ui.graphics.StrokeCap.Round,
-            )
-        }
+        PlusMark()
+    }
+}
+
+@Composable
+private fun PlusMark() {
+    Canvas(Modifier.fillMaxSize()) {
+        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+            width = this.size.minDimension * 0.12f,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        drawLine(
+            Color.White,
+            Offset(this.size.width * 0.18f, this.size.height / 2f),
+            Offset(this.size.width * 0.82f, this.size.height / 2f),
+            stroke.width,
+            androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        drawLine(
+            Color.White,
+            Offset(this.size.width / 2f, this.size.height * 0.18f),
+            Offset(this.size.width / 2f, this.size.height * 0.82f),
+            stroke.width,
+            androidx.compose.ui.graphics.StrokeCap.Round,
+        )
     }
 }
 
