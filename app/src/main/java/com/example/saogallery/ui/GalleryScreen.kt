@@ -241,9 +241,10 @@ private fun Fan(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val cardWidth = maxWidth * 0.52f
+        val chrome = if (compact) 56.dp else 128.dp
+        val cardWidth = minOf(maxWidth * 0.8f, (maxHeight - chrome) / 1.32f)
         val cardHeight = cardWidth * 1.32f
-        val spread = with(density) { (maxWidth * 0.28f).toPx() }
+        val spread = with(density) { (maxWidth * 0.34f).toPx() }
         val count = photos.size
         val step = if (count == 0) 360f else 360f / count
         val center = if (count == 0) 0f else rotation / step
@@ -255,28 +256,29 @@ private fun Fan(
                 if (delta < -count / 2f) delta += count
             }
             Triple(index, photo, delta)
-        }.filter { abs(it.third) < 1.7f }
+        }.sortedBy { abs(it.third) }.take(minOf(3, count)).sortedByDescending { abs(it.third) }
         visible.forEach { (index, photo, delta) ->
             val dist = abs(delta)
-            val scale = 1f - dist.coerceAtMost(1f) * 0.36f
-            val fade = if (dist <= 1f) 1f else (1f - (dist - 1f) / 0.65f).coerceIn(0f, 1f)
+            val emphasis = 1f - dist.coerceAtMost(1f)
+            val scale = 0.62f + emphasis * emphasis * 0.38f
+            val fade = if (dist <= 1.05f) 1f else (1f - (dist - 1.05f) / 0.4f).coerceIn(0f, 1f)
             PortraitWindow(
                 photo = photo,
                 focused = index == activeIndex,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .zIndex(2f - dist)
+                    .zIndex(3f - dist)
                     .width(cardWidth)
                     .height(cardHeight)
                     .graphicsLayer {
                         translationX = delta * spread
-                        translationY = dist * 14.dp.toPx()
-                        rotationY = -delta * 40f
-                        rotationZ = delta * 10f
+                        translationY = dist * 8.dp.toPx()
+                        rotationY = -delta * 26f
+                        rotationZ = delta * 6f
                         scaleX = scale
                         scaleY = scale
                         alpha = fade
-                        cameraDistance = 980f * density.density
+                        cameraDistance = 1200f * density.density
                         transformOrigin = TransformOrigin.Center
                     },
             )
