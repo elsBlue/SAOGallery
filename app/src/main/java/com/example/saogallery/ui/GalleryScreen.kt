@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -77,8 +78,6 @@ import com.example.saogallery.data.GalleryPhoto
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
 
 private val Paper = Color(0xFFF7F3EE)
 private val Ink = Color(0xFF3A2C32)
@@ -256,25 +255,28 @@ private fun Fan(
                 if (delta < -count / 2f) delta += count
             }
             Triple(index, photo, delta)
-        }.sortedBy { abs(it.third) }.take(minOf(3, count))
+        }.filter { abs(it.third) < 1.7f }
         visible.forEach { (index, photo, delta) ->
             val rel = delta * 28f
-            val scale = 0.74f + (1f - abs(delta).coerceAtMost(1f)) * 0.26f
+            val dist = abs(delta)
+            val scale = 0.74f + (1f - dist.coerceAtMost(1f)) * 0.26f
             val boost = if (index == activeIndex) 1.03f else 1f
+            val fade = if (dist <= 1f) 1f else (1f - (dist - 1f) / 0.65f).coerceIn(0f, 1f)
             PortraitWindow(
                 photo = photo,
                 focused = index == activeIndex,
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .zIndex(2f - abs(delta))
+                    .zIndex(2f - dist)
                     .width(cardWidth)
                     .height(cardHeight)
                     .graphicsLayer {
                         translationX = delta * spread
-                        translationY = abs(delta) * 12.dp.toPx()
+                        translationY = dist * 12.dp.toPx()
                         rotationY = (-rel).coerceIn(-36f, 36f)
                         scaleX = scale * boost
                         scaleY = scale * boost
+                        alpha = fade
                         cameraDistance = 16.dp.toPx()
                         transformOrigin = TransformOrigin.Center
                     },
@@ -520,24 +522,24 @@ private fun PlayBadge(modifier: Modifier = Modifier) {
 
 @Composable
 private fun ThemeGlyph(showSun: Boolean, color: Color) {
+    val sun = remember {
+        PathParser().parsePathString(
+            "M12 3.2v2.1M12 18.7v2.1M3.2 12h2.1M18.7 12h2.1M6.1 6.1l1.5 1.5M16.4 16.4l1.5 1.5M17.9 6.1l-1.5 1.5M7.6 16.4l-1.5 1.5",
+        ).toPath()
+    }
+    val moon = remember {
+        PathParser().parsePathString(
+            "M21.75 15A9.72 9.72 0 0 1 18 15.75c-5.39 0-9.75-4.37-9.75-9.75 0-1.33.27-2.6.75-3.75A9.75 9.75 0 0 0 3 11.25C3 16.64 7.37 21 12.75 21A9.75 9.75 0 0 0 21.75 15Z",
+        ).toPath()
+    }
     Canvas(Modifier.size(22.dp)) {
-        if (showSun) {
-            drawCircle(color, radius = size.minDimension * 0.18f)
-            val r = size.minDimension / 2f
-            repeat(8) { i ->
-                val a = Math.toRadians(i * 45.0)
-                drawLine(
-                    color,
-                    center + Offset((cos(a) * r * 0.42f).toFloat(), (sin(a) * r * 0.42f).toFloat()),
-                    center + Offset((cos(a) * r * 0.84f).toFloat(), (sin(a) * r * 0.84f).toFloat()),
-                    strokeWidth = 2.dp.toPx(),
-                    cap = StrokeCap.Round,
-                )
-            }
-        } else {
-            val moon = PathParser().parsePathString("M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z").toPath()
-            scale(size.minDimension / 24f, size.minDimension / 24f) {
-                drawPath(moon, color)
+        scale(size.minDimension / 24f, size.minDimension / 24f, Offset.Zero) {
+            val stroke = Stroke(width = 1.7f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            if (showSun) {
+                drawCircle(color, radius = 4f, center = Offset(12f, 12f), style = stroke)
+                drawPath(sun, color, style = stroke)
+            } else {
+                drawPath(moon, color, style = stroke)
             }
         }
     }

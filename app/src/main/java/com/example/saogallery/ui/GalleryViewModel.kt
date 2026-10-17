@@ -107,7 +107,10 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         settleJob?.cancel()
         settleJob = viewModelScope.launch {
             val start = rotation.value
-            val durationMs = 480L
+            val count = photos.value.size.coerceAtLeast(1)
+            val step = 360f / count
+            val portion = (abs(target - start) / step).coerceIn(0f, 1f)
+            val durationMs = (340f + portion * 260f).toLong()
             val started = System.nanoTime()
             while (isActive) {
                 val t = ((System.nanoTime() - started) / 1_000_000f) / durationMs
