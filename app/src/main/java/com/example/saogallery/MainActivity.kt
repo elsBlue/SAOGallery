@@ -16,8 +16,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            statusBarStyle = SystemBarStyle.auto(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+            ),
+            navigationBarStyle = SystemBarStyle.auto(
+                android.graphics.Color.TRANSPARENT,
+                android.graphics.Color.TRANSPARENT,
+            ),
         )
         setContent {
             SAOGalleryTheme {
@@ -28,6 +34,8 @@ class MainActivity : ComponentActivity() {
                     onDragStart = viewModel::onDragStart,
                     onDrag = viewModel::onDrag,
                     onDragEnd = viewModel::onDragEnd,
+                    onShowIndex = viewModel::showIndex,
+                    onAdd = viewModel::addPicked,
                 )
             }
         }

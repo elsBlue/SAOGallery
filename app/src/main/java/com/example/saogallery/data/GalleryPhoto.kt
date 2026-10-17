@@ -3,10 +3,8 @@ package com.example.saogallery.data
 import androidx.annotation.DrawableRes
 
 data class GalleryPhoto(
-    val id: Int,
+    val id: String,
     val name: String,
-    val fileName: String,
-    val note: String,
-    @DrawableRes val imageRes: Int,
-    val crossedOut: Boolean,
+    @DrawableRes val imageRes: Int = 0,
+    val imageUri: String? = null,
 )
