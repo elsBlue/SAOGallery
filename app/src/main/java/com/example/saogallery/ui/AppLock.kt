@@ -5,18 +5,21 @@ import android.content.ContextWrapper
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
@@ -46,7 +49,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -56,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.example.saogallery.R
 import com.example.saogallery.data.LockStore
 import kotlin.math.min
 
@@ -261,12 +267,26 @@ fun LockGate(
     var error by remember { mutableStateOf("") }
     var emailMode by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
-    Column(
-        Modifier.fillMaxSize().background(panel).padding(horizontal = 24.dp, vertical = 36.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    BoxWithConstraints(
+        Modifier.fillMaxSize().background(panel).windowInsetsPadding(WindowInsets.systemBars),
     ) {
-        Spacer(Modifier.height(28.dp))
-        Text("NYTE GALLERY", color = ink, fontSize = 13.sp, letterSpacing = 4.sp, fontWeight = FontWeight.SemiBold)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = maxHeight)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_art),
+            contentDescription = "Nyte Gallery",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(76.dp).clip(RoundedCornerShape(22.dp)),
+        )
+        Spacer(Modifier.height(14.dp))
+        Text("Nyte Gallery", color = ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(18.dp))
         Text(
             if (emailMode) "Enter the code sent to ${store.email()}" else "This gallery is locked. Use one of the ways you set.",
@@ -356,6 +376,7 @@ fun LockGate(
                     }
                 },
             )
+        }
         }
     }
 }
