@@ -129,6 +129,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     fun markTrashExplained() = vault.markTrashExplained()
 
     fun moveToTrash(index: Int) {
+        settleJob?.cancel()
         val visible = visible()
         val photo = visible.getOrNull(index) ?: return
         update(photo.id) { it.copy(trashedAt = System.currentTimeMillis()) }
@@ -137,7 +138,13 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun restore(id: String) {
+        settleJob?.cancel()
         update(id) { it.copy(trashedAt = null) }
+        val after = visible()
+        val index = after.indexOfFirst { it.id == id }
+        if (index >= 0 && after.isNotEmpty()) {
+            rotation.value = index * (360f / after.size)
+        }
     }
 
     fun addPicked(items: List<Pair<String, String>>) {

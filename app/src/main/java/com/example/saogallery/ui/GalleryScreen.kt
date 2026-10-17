@@ -67,7 +67,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.activity.compose.BackHandler
-import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.ClipOp
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -382,10 +383,11 @@ private fun Stage(
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
                 val cardWidth = maxWidth * 0.62f
                 val cardHeight = cardWidth * 1.32f
+                val visualScale = (0.62f + 0.5f) * 1.04f
                 Row(
                     Modifier
                         .align(Alignment.TopCenter)
-                        .offset(y = maxHeight / 2 + cardHeight / 2 * 1.04f - 8.dp + 14.dp)
+                        .offset(y = maxHeight / 2 + cardHeight / 2 * visualScale - 8.dp + 28.dp)
                         .zIndex(30f),
                     horizontalArrangement = Arrangement.spacedBy(22.dp),
                 ) {
@@ -960,12 +962,27 @@ private fun SunMoonIcon(light: Boolean) {
                 )
             }
         } else {
-            val crescent = Path().apply {
-                fillType = PathFillType.EvenOdd
-                addOval(androidx.compose.ui.geometry.Rect(Offset(size.width * 0.18f, size.height * 0.12f), Size(size.width * 0.68f, size.height * 0.68f)))
-                addOval(androidx.compose.ui.geometry.Rect(Offset(size.width * 0.38f, size.height * 0.04f), Size(size.width * 0.60f, size.height * 0.60f)))
+            val radius = size.minDimension * 0.36f
+            val moon = Path().apply {
+                addOval(
+                    androidx.compose.ui.geometry.Rect(
+                        Offset(size.width * 0.40f - radius, size.height * 0.50f - radius),
+                        Size(radius * 2f, radius * 2f),
+                    ),
+                )
             }
-            drawPath(crescent, color)
+            val bite = Path().apply {
+                val biteRadius = radius * 0.86f
+                addOval(
+                    androidx.compose.ui.geometry.Rect(
+                        Offset(size.width * 0.62f - biteRadius, size.height * 0.42f - biteRadius),
+                        Size(biteRadius * 2f, biteRadius * 2f),
+                    ),
+                )
+            }
+            clipPath(bite, clipOp = ClipOp.Difference) {
+                drawPath(moon, color)
+            }
         }
     }
 }
