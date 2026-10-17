@@ -1,12 +1,9 @@
 package com.example.saogallery.ui
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.saogallery.data.DeviceGallery
 import com.example.saogallery.data.GalleryPhoto
 import com.example.saogallery.data.GalleryRepository
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,101 +13,77 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlin.math.abs
+import java.util.UUID
 import kotlin.math.roundToInt
 
 data class GalleryUiState(
     val photos: List<GalleryPhoto>,
     val rotation: Float,
     val activeIndex: Int,
-    val fromDevice: Boolean,
 )
 
-class GalleryViewModel(app: Application) : AndroidViewModel(app) {
-    private val photos = MutableStateFlow(GalleryRepository.samples)
+class GalleryViewModel : ViewModel() {
+    private val photos = MutableStateFlow(GalleryRepository.photos)
     private val rotation = MutableStateFlow(0f)
-    private val fromDevice = MutableStateFlow(false)
     private var settleJob: Job? = null
 
-    val uiState: StateFlow<GalleryUiState> = combine(photos, rotation, fromDevice) { list, angle, device ->
+    val uiState: StateFlow<GalleryUiState> = combine(photos, rotation) { list, angle ->
         GalleryUiState(
             photos = list,
             rotation = angle,
             activeIndex = activeIndexFor(angle, list.size),
-            fromDevice = device,
         )
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        GalleryUiState(GalleryRepository.samples, 0f, 0, false),
+        GalleryUiState(GalleryRepository.photos, 0f, 0),
     )
-
-    fun scanDevice() {
-        viewModelScope.launch {
-            val found = withContext(Dispatchers.IO) { DeviceGallery.load(getApplication()) }
-            if (found.isEmpty()) return@launch
-            photos.value = found
-            fromDevice.value = true
-            rotation.value = 0f
-        }
-    }
-
-    private var dragOrigin = 0f
-    private var dragDx = 0f
 
     fun onDragStart() {
         settleJob?.cancel()
-        dragOrigin = rotation.value
-        dragDx = 0f
     }
 
     fun onDrag(deltaPx: Float) {
-        val count = photos.value.size
-        if (count == 0) return
+        if (photos.value.isEmpty()) return
         settleJob?.cancel()
-        dragDx += deltaPx
-        val step = 360f / count
-        val fraction = (-dragDx / PIXELS_PER_PHOTO).coerceIn(-1f, 1f)
-        rotation.value = dragOrigin + fraction * step
+        rotation.value -= deltaPx * DEGREES_PER_PIXEL
     }
 
     fun onDragEnd(velocityPx: Float) {
         val count = photos.value.size
         if (count == 0) return
         val step = 360f / count
-        val fraction = (-dragDx / PIXELS_PER_PHOTO).coerceIn(-1f, 1f)
-        val nudged = abs(fraction) > 0.28f
-        val flicked = abs(fraction) > 0.16f && abs(velocityPx) > 1400f
-        val go = when {
-            nudged -> if (fraction > 0f) 1 else -1
-            flicked -> if (velocityPx < 0f) 1 else -1
-            else -> 0
-        }
-        val startIndex = (dragOrigin / step).roundToInt()
-        animateTo((startIndex + go) * step)
+        val projected = rotation.value - velocityPx * FLING_SCALE
+        animateTo((projected / step).roundToInt() * step)
     }
 
     fun showIndex(index: Int) {
         val count = photos.value.size
         if (count == 0) return
         val step = 360f / count
-        val currentIndex = activeIndexFor(rotation.value, count)
-        var delta = index - currentIndex
-        if (delta > count / 2) delta -= count
-        if (delta < -count / 2) delta += count
-        if (abs(delta) <= 1) animateTo(rotation.value + delta * step)
-        else rotation.value = index * step
+        val current = rotation.value
+        val currentMod = ((current % 360f) + 360f) % 360f
+        var delta = index * step - currentMod
+        if (delta > 180f) delta -= 360f
+        if (delta < -180f) delta += 360f
+        animateTo(current + delta)
+    }
+
+    fun addPicked(items: List<Pair<String, String>>) {
+        if (items.isEmpty()) return
+        val start = photos.value.size
+        val added = items.map { (name, uri) ->
+            GalleryPhoto(id = UUID.randomUUID().toString(), name = name, imageUri = uri)
+        }
+        photos.value = photos.value + added
+        showIndex(start)
     }
 
     private fun animateTo(target: Float) {
         settleJob?.cancel()
         settleJob = viewModelScope.launch {
             val start = rotation.value
-            val count = photos.value.size.coerceAtLeast(1)
-            val step = 360f / count
-            val portion = (abs(target - start) / step).coerceIn(0f, 1f)
-            val durationMs = (340f + portion * 260f).toLong()
+            val durationMs = 480L
             val started = System.nanoTime()
             while (isActive) {
                 val t = ((System.nanoTime() - started) / 1_000_000f) / durationMs
@@ -132,6 +105,7 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        const val PIXELS_PER_PHOTO = 130f
+        const val DEGREES_PER_PIXEL = 0.22f
+        const val FLING_SCALE = 0.045f
     }
 }

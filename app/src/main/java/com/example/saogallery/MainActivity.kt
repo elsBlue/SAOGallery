@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
                     onDrag = viewModel::onDrag,
                     onDragEnd = viewModel::onDragEnd,
                     onShowIndex = viewModel::showIndex,
-                    onScan = viewModel::scanDevice,
+                    onAdd = viewModel::addPicked,
                 )
             }
         }
