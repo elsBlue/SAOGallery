@@ -7,4 +7,5 @@ data class GalleryPhoto(
     val name: String,
     @DrawableRes val imageRes: Int = 0,
     val imageUri: String? = null,
+    val folder: String = "Lainnya",
 )

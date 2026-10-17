@@ -1,30 +1,27 @@
 # SAOGallery
 
-Galeri foto Android (Kotlin + Jetpack Compose) dengan jendela mengambang. Enam foto terang sudah disertakan. Geser untuk memutar, kartu di tengah paling besar.
+Galeri foto Android (Kotlin + Jetpack Compose) dengan jendela mengambang. Foto di ponsel terbaca lewat MediaStore, dikelompokkan per folder, lalu bisa diputar seperti kartu.
 
 ## Fitur
 
-- Carousel jendela mengambang, geser horizontal, mengunci ke foto terdekat.
-- Mode terang dan gelap. Tombolnya di kanan atas.
-- Tombol galeri di kanan bawah, senada dengan tombol tema.
-- Panel galeri membelah layar: kartu di atas, daftar 4 kolom di bawah. Ketuk foto untuk memindahkan kartu.
-- Nama panjang dipotong dengan `...` di kartu dan di label bawah.
-- Tombol `+` membuka pemilih foto perangkat.
-- MVVM ringan: `GalleryRepository` → `GalleryViewModel` → `GalleryScreen`.
+- Saat dibuka, aplikasi memindai gambar di perangkat dan foldernya.
+- Daftar bawah punya tombol **Semua** dan **Folder**.
+- Layar terbelah 61,8% kartu dan 38,2% daftar.
+- Mode terang/gelap di kanan atas, tombol galeri senada di kanan bawah.
+- Nama panjang dipotong dengan `...`.
+- Enam gambar contoh tetap ada bila perangkat belum punya foto atau izin ditolak.
 
 Package: `com.example.saogallery`.
 
 ## Cara menjalankan
-
-Butuh Android Studio, JDK 17, dan Android SDK 35.
 
 ```bash
 chmod +x ./gradlew
 ./gradlew assembleDebug
 ```
 
-APK debug ada di `app/build/outputs/apk/debug/`.
+Butuh JDK 17 dan Android SDK 35. APK debug ada di `app/build/outputs/apk/debug/`.
 
 ## GitHub Actions
 
-[`.github/workflows/android-build.yml`](.github/workflows/android-build.yml) berjalan pada push ke `main` dan pada pull request: Ubuntu latest, JDK 17, cache Gradle, lalu artifact `saogallery-debug-apk`.
+[`.github/workflows/android-build.yml`](.github/workflows/android-build.yml) berjalan pada push ke `main` dan pull request, lalu mengunggah artifact `saogallery-debug-apk`.

@@ -1,9 +1,12 @@
 package com.example.saogallery.ui
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.saogallery.data.DeviceGallery
 import com.example.saogallery.data.GalleryPhoto
 import com.example.saogallery.data.GalleryRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,31 +16,44 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.util.UUID
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 data class GalleryUiState(
     val photos: List<GalleryPhoto>,
     val rotation: Float,
     val activeIndex: Int,
+    val fromDevice: Boolean,
 )
 
-class GalleryViewModel : ViewModel() {
-    private val photos = MutableStateFlow(GalleryRepository.photos)
+class GalleryViewModel(app: Application) : AndroidViewModel(app) {
+    private val photos = MutableStateFlow(GalleryRepository.samples)
     private val rotation = MutableStateFlow(0f)
+    private val fromDevice = MutableStateFlow(false)
     private var settleJob: Job? = null
 
-    val uiState: StateFlow<GalleryUiState> = combine(photos, rotation) { list, angle ->
+    val uiState: StateFlow<GalleryUiState> = combine(photos, rotation, fromDevice) { list, angle, device ->
         GalleryUiState(
             photos = list,
             rotation = angle,
             activeIndex = activeIndexFor(angle, list.size),
+            fromDevice = device,
         )
     }.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
-        GalleryUiState(GalleryRepository.photos, 0f, 0),
+        GalleryUiState(GalleryRepository.samples, 0f, 0, false),
     )
+
+    fun scanDevice() {
+        viewModelScope.launch {
+            val found = withContext(Dispatchers.IO) { DeviceGallery.load(getApplication()) }
+            if (found.isEmpty()) return@launch
+            photos.value = found
+            fromDevice.value = true
+            rotation.value = 0f
+        }
+    }
 
     fun onDragStart() {
         settleJob?.cancel()
@@ -67,16 +83,6 @@ class GalleryViewModel : ViewModel() {
         if (delta > 180f) delta -= 360f
         if (delta < -180f) delta += 360f
         animateTo(current + delta)
-    }
-
-    fun addPicked(items: List<Pair<String, String>>) {
-        if (items.isEmpty()) return
-        val start = photos.value.size
-        val added = items.map { (name, uri) ->
-            GalleryPhoto(id = UUID.randomUUID().toString(), name = name, imageUri = uri)
-        }
-        photos.value = photos.value + added
-        showIndex(start)
     }
 
     private fun animateTo(target: Float) {
