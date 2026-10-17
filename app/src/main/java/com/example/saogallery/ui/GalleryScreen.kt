@@ -587,10 +587,30 @@ private fun FullView(photo: GalleryPhoto, onClose: () -> Unit) {
 private fun LensGlyph() {
     Canvas(Modifier.size(18.dp)) {
         val color = Color.White
-        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
-        drawCircle(color, radius = size.minDimension * 0.38f, style = stroke)
-        drawCircle(color, radius = size.minDimension * 0.16f, style = stroke)
-        drawCircle(color, radius = size.minDimension * 0.045f)
+        val ring = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.35.dp.toPx())
+        drawCircle(color, radius = size.minDimension * 0.42f, style = ring)
+        drawCircle(color, radius = size.minDimension * 0.30f, style = ring)
+        val glass = size.minDimension * 0.16f
+        drawCircle(color, radius = glass, style = ring)
+        val glassClip = Path().apply {
+            addOval(
+                androidx.compose.ui.geometry.Rect(
+                    Offset(center.x - glass, center.y - glass),
+                    Size(glass * 2f, glass * 2f),
+                ),
+            )
+        }
+        val shine = Path().apply {
+            addOval(
+                androidx.compose.ui.geometry.Rect(
+                    Offset(center.x - glass * 0.35f, center.y - glass * 0.95f),
+                    Size(glass * 1.05f, glass * 0.62f),
+                ),
+            )
+        }
+        clipPath(glassClip) {
+            drawPath(shine, color)
+        }
     }
 }
 
