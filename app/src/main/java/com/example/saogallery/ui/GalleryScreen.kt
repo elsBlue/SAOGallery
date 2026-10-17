@@ -6,10 +6,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.widget.Toast
 import android.graphics.BitmapFactory
-import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -125,7 +123,7 @@ fun GalleryScreen(
     onDrag: (Float) -> Unit,
     onDragEnd: (Float) -> Unit,
     onShowIndex: (Int) -> Unit,
-    onAdd: (List<Pair<String, String>>) -> Unit,
+    onImport: (List<String>, (ImportOutcome) -> Unit) -> Unit,
     onRename: (Int, String) -> Unit,
     onTrash: (Int) -> Unit,
     onRestore: (String) -> Unit,
@@ -148,6 +146,7 @@ fun GalleryScreen(
     var viewing by remember { mutableStateOf(false) }
     var restoreOpen by remember { mutableStateOf(false) }
     var emptyingTrash by remember { mutableStateOf(false) }
+    var choosingDevice by remember { mutableStateOf(false) }
     var pendingExportIds by remember { mutableStateOf(emptySet<String>()) }
     var draft by remember { mutableStateOf("") }
     val view = LocalView.current
@@ -158,17 +157,20 @@ fun GalleryScreen(
         controller.isAppearanceLightNavigationBars = light
     }
 
-    val picker = rememberLauncherForActivityResult(
-        ActivityResultContracts.PickMultipleVisualMedia(30),
-    ) { uris ->
-        val picked = uris.map { uri -> displayName(context, uri) to uri.toString() }
-        if (picked.isNotEmpty()) {
-            galleryOpen = true
-            onAdd(picked)
+    val deleteConsent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        val message = if (result.resultCode == Activity.RESULT_OK) {
+            "Encrypted inside Nyte Gallery and removed from your gallery"
+        } else {
+            "Saved in Nyte Gallery, but still visible in your other gallery until you allow the delete"
         }
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+    }
+    val photoAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        if (granted.values.any { it }) choosingDevice = true
+        else Toast.makeText(context, "Photo access is needed to move images out of your gallery", Toast.LENGTH_SHORT).show()
     }
     val openPicker = {
-        picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        if (hasPhotoAccess(context)) choosingDevice = true else photoAccess.launch(photoPermissions())
     }
     val openRename = {
         val current = state.photos.getOrNull(state.activeIndex)
@@ -215,11 +217,12 @@ fun GalleryScreen(
         }
     }
 
-    BackHandler(enabled = locked || settingLock || confirmingLock || viewing || editing || explainingTrash || emptyingTrash || restoreOpen || trashOpen || galleryOpen) {
+    BackHandler(enabled = locked || settingLock || confirmingLock || choosingDevice || viewing || editing || explainingTrash || emptyingTrash || restoreOpen || trashOpen || galleryOpen) {
         when {
             settingLock -> settingLock = false
             confirmingLock -> confirmingLock = false
             locked -> Unit
+            choosingDevice -> choosingDevice = false
             viewing -> viewing = false
             editing -> editing = false
             explainingTrash -> explainingTrash = false
@@ -440,6 +443,24 @@ fun GalleryScreen(
         val openPhoto = state.photos.getOrNull(state.activeIndex)
         if (viewing && openPhoto != null && !locked) {
             FullView(photo = openPhoto, onClose = { viewing = false })
+        }
+        if (choosingDevice && !locked) {
+            DeviceImportPage(
+                light = light,
+                onClose = { choosingDevice = false },
+                onMove = { uris ->
+                    choosingDevice = false
+                    galleryOpen = true
+                    onImport(uris.map { it.toString() }) { outcome ->
+                        when {
+                            outcome.imported == 0 -> Toast.makeText(context, "Couldn't read those photos", Toast.LENGTH_SHORT).show()
+                            outcome.consent != null -> deleteConsent.launch(IntentSenderRequest.Builder(outcome.consent).build())
+                            outcome.alreadyRemoved -> Toast.makeText(context, "Encrypted inside Nyte Gallery and removed from your gallery", Toast.LENGTH_LONG).show()
+                            else -> Toast.makeText(context, "Saved in Nyte Gallery, but still visible in your other gallery", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+            )
         }
         if (confirmingLock && !locked) {
             LockConfirm(
@@ -1485,14 +1506,4 @@ private fun clipName(text: String, max: Int): String {
     val clean = text.replace(Regex("\\.[A-Za-z0-9]+$"), "")
     if (clean.length <= max) return clean
     return clean.take(max).trimEnd() + "..."
-}
-
-private fun displayName(context: android.content.Context, uri: Uri): String {
-    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) {
-            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index >= 0) return cursor.getString(index) ?: "Photo"
-        }
-    }
-    return "Photo"
 }

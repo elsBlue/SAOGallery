@@ -1,13 +1,16 @@
 package com.example.saogallery.ui
 
 import android.app.Application
+import android.app.RecoverableSecurityException
 import android.content.ContentValues
+import android.content.IntentSender
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.annotation.RequiresApi
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.saogallery.data.GalleryPhoto
@@ -34,6 +37,12 @@ data class GalleryUiState(
     val trash: List<GalleryPhoto>,
     val rotation: Float,
     val activeIndex: Int,
+)
+
+data class ImportOutcome(
+    val consent: IntentSender?,
+    val imported: Int,
+    val alreadyRemoved: Boolean,
 )
 
 class GalleryViewModel(app: Application) : AndroidViewModel(app) {
@@ -223,6 +232,62 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {
             false
         }
+    }
+
+    fun importFromDevice(uriStrings: List<String>, onReady: (ImportOutcome) -> Unit) {
+        if (uriStrings.isEmpty()) return
+        val start = visible().size
+        viewModelScope.launch {
+            val uris = uriStrings.map { Uri.parse(it) }
+            val added = withContext(Dispatchers.IO) {
+                val resolver = getApplication<Application>().contentResolver
+                uris.mapNotNull { uri ->
+                    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return@mapNotNull null
+                    val rawName = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getString(0) else null
+                    } ?: "Photo"
+                    val taken = captureMillis(bytes).takeIf { it > 0L } ?: System.currentTimeMillis()
+                    vault.import(rawName.substringBeforeLast('.'), bytes, UUID.randomUUID().toString(), taken)
+                }
+            }
+            if (added.isEmpty()) {
+                onReady(ImportOutcome(null, 0, false))
+                return@launch
+            }
+            all.value = all.value + added
+            vault.save(all.value)
+            showIndex(start)
+            val removal = withContext(Dispatchers.IO) { removeOriginals(uris) }
+            onReady(ImportOutcome(removal.first, added.size, removal.second))
+        }
+    }
+
+    private fun removeOriginals(uris: List<Uri>): Pair<IntentSender?, Boolean> {
+        val resolver = getApplication<Application>().contentResolver
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return try {
+                MediaStore.createDeleteRequest(resolver, uris).intentSender to false
+            } catch (_: Exception) {
+                null to false
+            }
+        }
+        var removed = true
+        for (uri in uris) {
+            try {
+                if (resolver.delete(uri, null, null) <= 0) removed = false
+            } catch (error: SecurityException) {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    recoverableSender(error)?.let { return it to false }
+                }
+                removed = false
+            }
+        }
+        return null to removed
+    }
+
+    @RequiresApi(29)
+    private fun recoverableSender(error: SecurityException): IntentSender? {
+        return (error as? RecoverableSecurityException)?.userAction?.actionIntent?.intentSender
     }
 
     fun addPicked(items: List<Pair<String, String>>) {

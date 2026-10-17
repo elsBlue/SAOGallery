@@ -38,7 +38,7 @@ class MainActivity : FragmentActivity() {
                     onDrag = viewModel::onDrag,
                     onDragEnd = viewModel::onDragEnd,
                     onShowIndex = viewModel::showIndex,
-                    onAdd = viewModel::addPicked,
+                    onImport = viewModel::importFromDevice,
                     onRename = viewModel::rename,
                     onTrash = viewModel::moveToTrash,
                     onRestore = viewModel::restore,

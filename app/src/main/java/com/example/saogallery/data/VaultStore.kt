@@ -13,7 +13,10 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 class VaultStore(context: Context) {
-    private val dir = File(context.filesDir, "vault").apply { mkdirs() }
+    private val dir = File(context.filesDir, "vault").apply {
+        mkdirs()
+        File(this, ".nomedia").takeIf { !it.exists() }?.createNewFile()
+    }
     private val index = File(dir, "index.json")
     private val prefs = context.getSharedPreferences("nyte_gallery", Context.MODE_PRIVATE)
 
