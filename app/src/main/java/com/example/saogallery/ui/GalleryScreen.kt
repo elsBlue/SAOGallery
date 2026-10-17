@@ -275,10 +275,14 @@ fun GalleryScreen(
         }
 
         Row(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .windowInsetsPadding(WindowInsets.systemBars)
-                .padding(bottom = 12.dp)
+            (if (state.photos.isEmpty()) {
+                Modifier.align(Alignment.Center)
+            } else {
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(bottom = 12.dp)
+            })
                 .height(44.dp)
                 .shadow(8.dp, CircleShape)
                 .clip(CircleShape)
