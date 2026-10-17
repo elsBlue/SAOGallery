@@ -214,20 +214,6 @@ fun GalleryScreen(
                     onDelete = requestTrash,
                     onOpen = { viewing = true },
                 )
-                if (state.photos.isEmpty()) {
-                    Column(
-                        Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        AddButton(size = 96.dp, onClick = openPicker)
-                        Text(
-                            "add images",
-                            color = ink.copy(alpha = 0.78f),
-                            fontSize = 15.sp,
-                            modifier = Modifier.padding(top = 12.dp),
-                        )
-                    }
-                }
             }
             if (trashOpen) {
                 TrashGrid(
@@ -288,24 +274,22 @@ fun GalleryScreen(
             ) { GalleryGlyph() }
         }
 
-        if (state.photos.isNotEmpty()) {
-            Row(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.systemBars)
-                    .padding(bottom = 12.dp)
-                    .height(44.dp)
-                    .shadow(8.dp, CircleShape)
-                    .clip(CircleShape)
-                    .background(AddGreen)
-                    .clickable(onClick = openPicker)
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Box(Modifier.size(16.dp)) { PlusMark() }
-                Text("Add Images", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            }
+        Row(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(bottom = 12.dp)
+                .height(44.dp)
+                .shadow(8.dp, CircleShape)
+                .clip(CircleShape)
+                .background(AddGreen)
+                .clickable(onClick = openPicker)
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Box(Modifier.size(16.dp)) { PlusMark() }
+            Text("Add Images", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
 
         if (editing) {
@@ -822,21 +806,6 @@ private fun NoticeOverlay(
                 Text("Move to Trash", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             }
         }
-    }
-}
-
-@Composable
-private fun AddButton(size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .size(size)
-            .shadow(10.dp, CircleShape)
-            .clip(CircleShape)
-            .background(AddGreen)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        PlusMark()
     }
 }
 
