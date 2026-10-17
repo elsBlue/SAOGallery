@@ -534,6 +534,8 @@ private fun LockField(
     placeholder: String,
     onChange: (String) -> Unit,
 ) {
+    var shown by remember { mutableStateOf(false) }
+    val mask = hidden && !shown
     Box(
         Modifier
             .padding(top = 6.dp)
@@ -541,7 +543,7 @@ private fun LockField(
             .height(52.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(field)
-            .padding(horizontal = 16.dp),
+            .padding(start = 16.dp, end = if (hidden) 8.dp else 16.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         if (value.isEmpty()) {
@@ -553,10 +555,42 @@ private fun LockField(
             singleLine = true,
             textStyle = TextStyle(color = ink, fontSize = 16.sp),
             cursorBrush = SolidColor(LockPink),
-            visualTransformation = if (hidden) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            visualTransformation = if (mask) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
             keyboardOptions = KeyboardOptions(keyboardType = keyboard),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(end = if (hidden) 36.dp else 0.dp),
         )
+        if (hidden) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable { shown = !shown },
+                contentAlignment = Alignment.Center,
+            ) {
+                EyeMark(ink.copy(alpha = 0.72f), concealed = !shown)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EyeMark(color: Color, concealed: Boolean) {
+    Canvas(Modifier.size(20.dp)) {
+        val stroke = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
+        val w = size.width
+        val h = size.height
+        val eye = Path().apply {
+            moveTo(w * 0.08f, h * 0.5f)
+            quadraticBezierTo(w * 0.5f, h * 0.12f, w * 0.92f, h * 0.5f)
+            quadraticBezierTo(w * 0.5f, h * 0.88f, w * 0.08f, h * 0.5f)
+            close()
+        }
+        drawPath(eye, color, style = stroke)
+        drawCircle(color, radius = w * 0.11f, center = center)
+        if (concealed) {
+            drawLine(color, Offset(w * 0.2f, h * 0.78f), Offset(w * 0.8f, h * 0.22f), stroke.width, StrokeCap.Round)
+        }
     }
 }
 
