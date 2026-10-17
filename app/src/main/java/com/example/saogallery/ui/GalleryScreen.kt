@@ -160,6 +160,7 @@ fun GalleryScreen(
     var backupError by remember { mutableStateOf<String?>(null) }
     var pendingExportIds by remember { mutableStateOf(emptySet<String>()) }
     var draft by remember { mutableStateOf("") }
+    val exitArmedUntil = remember { longArrayOf(0L) }
     val view = LocalView.current
     androidx.compose.runtime.SideEffect {
         val window = (view.context as Activity).window
@@ -293,7 +294,7 @@ fun GalleryScreen(
         }
     }
 
-    BackHandler(enabled = locked || settingLock || confirmingLock || choosingDevice || viewing || editing || explainingTrash || emptyingTrash || restoreOpen || trashOpen || galleryOpen || menuOpen || backupOpen || importBackup) {
+    BackHandler(enabled = true) {
         when {
             settingLock -> settingLock = false
             confirmingLock -> confirmingLock = false
@@ -308,7 +309,16 @@ fun GalleryScreen(
             emptyingTrash -> emptyingTrash = false
             restoreOpen -> restoreOpen = false
             trashOpen -> trashOpen = false
-            else -> galleryOpen = false
+            galleryOpen -> galleryOpen = false
+            else -> {
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now < exitArmedUntil[0]) {
+                    (context as? Activity)?.finish()
+                } else {
+                    exitArmedUntil[0] = now + 2_000L
+                    Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
