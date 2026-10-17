@@ -10,6 +10,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.Size
 import androidx.core.content.ContextCompat
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -46,6 +47,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -72,11 +74,25 @@ fun hasPhotoAccess(context: Context): Boolean {
     }
 }
 
-data class DevicePhoto(val uri: Uri, val name: String)
+data class DevicePhoto(val uri: Uri, val name: String, val folder: String)
+
+private const val BUCKET_COLUMN = "bucket_display_name"
 
 fun queryDevicePhotos(context: Context): List<DevicePhoto> {
+    return try {
+        readDevicePhotos(context, withFolder = true)
+    } catch (_: IllegalArgumentException) {
+        readDevicePhotos(context, withFolder = false)
+    }
+}
+
+private fun readDevicePhotos(context: Context, withFolder: Boolean): List<DevicePhoto> {
     val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-    val projection = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME)
+    val projection = buildList {
+        add(MediaStore.Images.Media._ID)
+        add(MediaStore.Images.Media.DISPLAY_NAME)
+        if (withFolder) add(BUCKET_COLUMN)
+    }.toTypedArray()
     val found = mutableListOf<DevicePhoto>()
     context.contentResolver.query(
         collection,
@@ -87,10 +103,13 @@ fun queryDevicePhotos(context: Context): List<DevicePhoto> {
     )?.use { cursor ->
         val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
         val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-        while (cursor.moveToNext() && found.size < 400) {
+        val folderColumn = if (withFolder) cursor.getColumnIndex(BUCKET_COLUMN) else -1
+        while (cursor.moveToNext() && found.size < 4000) {
             val id = cursor.getLong(idColumn)
             val name = cursor.getString(nameColumn) ?: "Photo"
-            found += DevicePhoto(ContentUris.withAppendedId(collection, id), name)
+            val rawFolder = if (folderColumn >= 0) cursor.getString(folderColumn) else null
+            val folder = rawFolder?.trim().takeUnless { it.isNullOrEmpty() } ?: "Pictures"
+            found += DevicePhoto(ContentUris.withAppendedId(collection, id), name, folder)
         }
     }
     return found
@@ -108,8 +127,21 @@ fun DeviceImportPage(
     val field = if (light) Color.White else Color(0xFF1C1E26)
     var photos by remember { mutableStateOf<List<DevicePhoto>>(emptyList()) }
     var selected by remember { mutableStateOf(setOf<String>()) }
+    var mode by remember { mutableStateOf("all") }
+    var openFolder by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         photos = withContext(Dispatchers.IO) { queryDevicePhotos(context) }
+    }
+    BackHandler(enabled = openFolder != null) {
+        openFolder = null
+    }
+    val folders = remember(photos) {
+        photos.groupBy { it.folder }.entries.toList()
+    }
+    val visible = if (mode == "folder" && openFolder != null) {
+        photos.filter { it.folder == openFolder }
+    } else {
+        photos
     }
     Column(Modifier.fillMaxSize().background(panel).windowInsetsPadding(WindowInsets.systemBars)) {
         Row(
@@ -126,9 +158,85 @@ fun DeviceImportPage(
             lineHeight = 18.sp,
             modifier = Modifier.padding(horizontal = 18.dp),
         )
+        if (photos.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 18.dp, end = 12.dp, top = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ModeChip("All", mode == "all", light) {
+                    mode = "all"
+                    openFolder = null
+                }
+                ModeChip("Folder", mode == "folder", light) {
+                    mode = "folder"
+                }
+                val opened = openFolder
+                if (mode == "folder" && opened != null) {
+                    Text(
+                        "‹ $opened",
+                        color = ink.copy(alpha = 0.8f),
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { openFolder = null }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                }
+            }
+        }
         if (photos.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text("No photos to move yet.", color = ink.copy(alpha = 0.55f), textAlign = TextAlign.Center)
+            }
+        } else if (mode == "folder" && openFolder == null) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 12.dp, start = 12.dp, end = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(folders, key = { it.key }) { entry ->
+                    val picked = entry.value.count { it.uri.toString() in selected }
+                    Column(
+                        Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { openFolder = entry.key },
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(4f / 3f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(field),
+                        ) {
+                            DeviceThumb(entry.value.first().uri)
+                            if (picked > 0) {
+                                Box(
+                                    Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(6.dp)
+                                        .background(MovePink, CircleShape)
+                                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                                ) {
+                                    Text("$picked", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                        Text(
+                            "${entry.key} · ${entry.value.size}",
+                            color = ink,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp, bottom = 2.dp),
+                        )
+                    }
+                }
             }
         } else {
             LazyVerticalGrid(
@@ -137,7 +245,7 @@ fun DeviceImportPage(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(photos, key = { it.uri.toString() }) { photo ->
+                items(visible, key = { it.uri.toString() }) { photo ->
                     val key = photo.uri.toString()
                     val on = key in selected
                     Box(
@@ -184,6 +292,33 @@ fun DeviceImportPage(
             )
         }
     }
+}
+
+@Composable
+private fun ModeChip(label: String, active: Boolean, light: Boolean, onClick: () -> Unit) {
+    val bg = when {
+        active && light -> Color(0xFF2A2428)
+        active -> Color.White
+        light -> Color(0x0F000000)
+        else -> Color(0x1AFFFFFF)
+    }
+    val fg = when {
+        active && light -> Color.White
+        active -> Color(0xFF1C1E26)
+        light -> Color(0xFF5C463F)
+        else -> Color.White.copy(alpha = 0.82f)
+    }
+    Text(
+        label,
+        color = fg,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    )
 }
 
 @Composable
