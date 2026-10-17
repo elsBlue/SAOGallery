@@ -62,6 +62,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -101,6 +102,7 @@ private val Ink = Color(0xFF3A2C32)
 private val DotA = Color(0xFFFF4D6A)
 private val DotB = Color(0xFFFF8AA0)
 private val DotC = Color(0xFFFFC0CC)
+private val AddGreen = Color(0xFF2F9B68)
 
 private const val CARD_LIMIT = 16
 private const val LABEL_LIMIT = 22
@@ -212,6 +214,20 @@ fun GalleryScreen(
                     onDelete = requestTrash,
                     onOpen = { viewing = true },
                 )
+                if (state.photos.isEmpty()) {
+                    Column(
+                        Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        AddButton(size = 96.dp, onClick = openPicker)
+                        Text(
+                            "add images",
+                            color = ink.copy(alpha = 0.78f),
+                            fontSize = 15.sp,
+                            modifier = Modifier.padding(top = 12.dp),
+                        )
+                    }
+                }
             }
             if (trashOpen) {
                 TrashGrid(
@@ -267,10 +283,20 @@ fun GalleryScreen(
                 modifier = Modifier,
                 onClick = {
                     trashOpen = false
-                    if (!galleryOpen && state.photos.isEmpty()) openPicker()
                     galleryOpen = !galleryOpen
                 },
             ) { GalleryGlyph() }
+        }
+
+        if (state.photos.isNotEmpty()) {
+            AddButton(
+                size = 44.dp,
+                onClick = openPicker,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(bottom = 12.dp),
+            )
         }
 
         if (editing) {
@@ -288,8 +314,8 @@ fun GalleryScreen(
         if (explainingTrash) {
             NoticeOverlay(
                 light = light,
-                title = "MASUK TRASH",
-                body = "Gambar ini masuk ke Trash. Trash menghapusnya otomatis setelah 30 hari. Sebelum itu, gambar bisa dikembalikan.",
+                title = "MOVE TO TRASH",
+                body = "This image goes to Trash. Trash deletes it automatically after 30 days. You can restore it before then.",
                 onDismiss = { explainingTrash = false },
                 onConfirm = {
                     onTrashExplained()
@@ -691,7 +717,7 @@ private fun TrashGrid(
     val ink = if (light) Color(0xFF2A2428) else Color.White
     Column(modifier.background(if (light) Color(0xFFF7F4EF) else Color(0xFF0C0D11))) {
         Text(
-            "Trash · terhapus otomatis setelah 30 hari",
+            "Trash · deleted automatically after 30 days",
             color = ink.copy(alpha = 0.7f),
             fontSize = 12.sp,
             modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 4.dp),
@@ -784,8 +810,42 @@ private fun NoticeOverlay(
                     .padding(horizontal = 18.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Masukkan ke Trash", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text("Move to Trash", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             }
+        }
+    }
+}
+
+@Composable
+private fun AddButton(size: Dp, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .size(size)
+            .shadow(10.dp, CircleShape)
+            .clip(CircleShape)
+            .background(AddGreen)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val stroke = androidx.compose.ui.graphics.drawscope.Stroke(
+                width = this.size.minDimension * 0.045f,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            )
+            drawLine(
+                Color.White,
+                Offset(this.size.width * 0.28f, this.size.height / 2f),
+                Offset(this.size.width * 0.72f, this.size.height / 2f),
+                stroke.width,
+                androidx.compose.ui.graphics.StrokeCap.Round,
+            )
+            drawLine(
+                Color.White,
+                Offset(this.size.width / 2f, this.size.height * 0.28f),
+                Offset(this.size.width / 2f, this.size.height * 0.72f),
+                stroke.width,
+                androidx.compose.ui.graphics.StrokeCap.Round,
+            )
         }
     }
 }
@@ -890,7 +950,7 @@ private fun RenameOverlay(
                 Spacer(Modifier.width(5.dp))
                 Dot(DotC)
                 Text(
-                    "UBAH NAMA",
+                    "RENAME",
                     modifier = Modifier.padding(start = 10.dp),
                     color = ink.copy(alpha = 0.72f),
                     fontSize = 12.sp,
@@ -1055,8 +1115,8 @@ private fun displayName(context: android.content.Context, uri: Uri): String {
     context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
         if (cursor.moveToFirst()) {
             val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (index >= 0) return cursor.getString(index) ?: "Foto"
+            if (index >= 0) return cursor.getString(index) ?: "Photo"
         }
     }
-    return "Foto"
+    return "Photo"
 }

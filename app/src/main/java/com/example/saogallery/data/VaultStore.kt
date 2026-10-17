@@ -32,8 +32,10 @@ class VaultStore(context: Context) {
         return saved.map { photo ->
             val bundled = GalleryRepository.photos.find { it.id == photo.id }
             if (bundled != null && photo.vaultFile == null) {
+                val legacy = LEGACY_NAMES[photo.id]
                 photo.copy(
                     imageRes = bundled.imageRes,
+                    name = if (photo.name == legacy) bundled.name else photo.name,
                     takenAt = if (photo.takenAt > 0L) photo.takenAt else bundled.takenAt,
                 )
             } else {
@@ -150,5 +152,13 @@ class VaultStore(context: Context) {
         const val SEEDED = "seeded"
         const val TRASH_EXPLAINED = "trash_explained"
         const val TRASH_MS = 30L * 24L * 60L * 60L * 1000L
+        val LEGACY_NAMES = mapOf(
+            "valley" to "Lembah Danau Terang",
+            "japan" to "Gadis Kota Jepang",
+            "cyber" to "Pasar Neon Cyberpunk",
+            "sea" to "Pantai Payung Kuning",
+            "cat" to "Kucing di Taman Bunga",
+            "lantern" to "Lentera Festival Siang",
+        )
     }
 }
