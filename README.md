@@ -1,6 +1,6 @@
-# SAOGallery
+# Nyte Gallery
 
-Galeri foto Android (Kotlin + Jetpack Compose) dengan jendela mengambang. Enam foto terang sudah disertakan. Geser untuk memutar, kartu di tengah paling besar.
+Galeri foto Android (Kotlin + Jetpack Compose) bernama Nyte Gallery, dengan jendela mengambang. Enam foto terang sudah disertakan. Geser untuk memutar, kartu di tengah paling besar.
 
 ## Fitur
 
