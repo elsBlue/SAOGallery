@@ -1091,7 +1091,8 @@ private fun BoxWithConstraintsFill(
                     .height(frame)
                     .graphicsLayer {
                         translationX = sin(rad).toFloat() * radiusPx
-                        translationY = (1f - depth) * 28.dp.toPx() - 8.dp.toPx() - (CardHeader / 2).toPx()
+                        translationY = (1f - depth) * 28.dp.toPx() - 8.dp.toPx() - (CardHeader / 2).toPx() +
+                            if (compact) 36.dp.toPx() else 0f
                         rotationY = (-rel * 0.72f).coerceIn(-62f, 62f)
                         rotationZ = rel * 0.045f
                         scaleX = scale * boost
