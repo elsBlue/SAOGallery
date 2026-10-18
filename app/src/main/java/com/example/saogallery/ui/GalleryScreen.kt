@@ -358,37 +358,39 @@ fun GalleryScreen(
         )
         Box(Modifier.fillMaxSize().background(wash))
         Column(Modifier.fillMaxSize()) {
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .pointerInput(state.photos.size) {
-                        val tracker = VelocityTracker()
-                        detectHorizontalDragGestures(
-                            onDragStart = {
-                                tracker.resetTracking()
-                                onDragStart()
-                            },
-                            onHorizontalDrag = { change, dragAmount ->
-                                tracker.addPosition(change.uptimeMillis, change.position)
-                                onDrag(dragAmount)
-                            },
-                            onDragEnd = { onDragEnd(tracker.calculateVelocity().x) },
-                            onDragCancel = { onDragEnd(0f) },
-                        )
-                    },
-            ) {
-                Stage(
-                    state = state,
-                    light = light,
-                    compact = galleryOpen || trashOpen,
-                    showPencil = galleryOpen,
-                    showActions = !galleryOpen && !trashOpen,
-                    ink = ink,
-                    onEdit = openRename,
-                    onDelete = requestTrash,
-                    onOpen = { viewing = true },
-                )
+            if (!trashOpen) {
+                Box(
+                    Modifier
+                        .weight(if (galleryOpen) 0.6f else 1f)
+                        .fillMaxWidth()
+                        .pointerInput(state.photos.size) {
+                            val tracker = VelocityTracker()
+                            detectHorizontalDragGestures(
+                                onDragStart = {
+                                    tracker.resetTracking()
+                                    onDragStart()
+                                },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    tracker.addPosition(change.uptimeMillis, change.position)
+                                    onDrag(dragAmount)
+                                },
+                                onDragEnd = { onDragEnd(tracker.calculateVelocity().x) },
+                                onDragCancel = { onDragEnd(0f) },
+                            )
+                        },
+                ) {
+                    Stage(
+                        state = state,
+                        light = light,
+                        compact = galleryOpen,
+                        showPencil = galleryOpen,
+                        showActions = !galleryOpen && !trashOpen,
+                        ink = ink,
+                        onEdit = openRename,
+                        onDelete = requestTrash,
+                        onOpen = { viewing = true },
+                    )
+                }
             }
             if (trashOpen) {
                 TrashGrid(
@@ -405,7 +407,7 @@ fun GalleryScreen(
                     light = light,
                     onAdd = openPicker,
                     onPick = onShowIndex,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier.weight(0.4f).fillMaxWidth(),
                 )
             }
         }
@@ -1333,7 +1335,13 @@ private fun TrashGrid(
     modifier: Modifier = Modifier,
 ) {
     val ink = if (light) Color(0xFF2A2428) else Color.White
-    Column(modifier.background(if (light) Color(0xFFF7F4EF) else Color(0xFF0C0D11))) {
+    Column(
+        modifier
+            .fillMaxSize()
+            .background(if (light) Color(0xFFF7F4EF) else Color(0xFF0C0D11))
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .padding(top = 56.dp, bottom = 64.dp),
+    ) {
         Row(
             Modifier
                 .fillMaxWidth()
