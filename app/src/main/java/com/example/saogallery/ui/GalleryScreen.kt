@@ -121,6 +121,8 @@ private val AddGreen = Color(0xFF2F9B68)
 
 private const val CARD_LIMIT = 16
 private const val LABEL_LIMIT = 22
+private const val SCREENSHOTS_ALLOWED = true
+private val CardHeader = 34.dp
 
 @Composable
 fun GalleryScreen(
@@ -177,7 +179,7 @@ fun GalleryScreen(
     DisposableEffect(locked, host) {
         val window = host?.window
         if (window != null) {
-            if (locked) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            if (locked || SCREENSHOTS_ALLOWED) window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             else window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
         onDispose { host?.window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
@@ -1077,6 +1079,7 @@ private fun BoxWithConstraintsFill(
             val scale = 0.62f + ((depth + 1f) / 2f) * 0.5f
             val fade = (1.15f - abs(rel) / 130f).coerceIn(0.15f, 1f)
             val boost = if (index == activeIndex) 1.04f else 1f
+            val frame = cardHeight + CardHeader
             PortraitWindow(
                 photo = photo,
                 featured = index == activeIndex,
@@ -1085,17 +1088,20 @@ private fun BoxWithConstraintsFill(
                     .align(Alignment.Center)
                     .zIndex(depth)
                     .width(cardWidth)
-                    .height(cardHeight)
+                    .height(frame)
                     .graphicsLayer {
                         translationX = sin(rad).toFloat() * radiusPx
-                        translationY = (1f - depth) * 28.dp.toPx() - 8.dp.toPx()
+                        translationY = (1f - depth) * 28.dp.toPx() - 8.dp.toPx() - (CardHeader / 2).toPx()
                         rotationY = (-rel * 0.72f).coerceIn(-62f, 62f)
                         rotationZ = rel * 0.045f
                         scaleX = scale * boost
                         scaleY = scale * boost
                         alpha = fade
                         cameraDistance = 16.dp.toPx()
-                        transformOrigin = TransformOrigin.Center
+                        transformOrigin = TransformOrigin(
+                            0.5f,
+                            (CardHeader + cardHeight / 2).value / frame.value,
+                        )
                         clip = false
                     },
             )
@@ -1110,36 +1116,11 @@ private fun PortraitWindow(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .shadow(24.dp, RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
-                .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
-                .background(Color(0xFFD9D3CC)),
-        ) {
-            PhotoImage(photo, Modifier.fillMaxSize())
-            if (featured) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp)
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.48f))
-                        .clickable(onClick = onOpen),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    LensGlyph()
-                }
-            }
-        }
+    Column(modifier) {
         Row(
             Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = (-34).dp)
                 .fillMaxWidth()
-                .height(34.dp)
+                .height(CardHeader)
                 .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
                 .background(Paper)
                 .padding(horizontal = 10.dp),
@@ -1165,6 +1146,30 @@ private fun PortraitWindow(
                     color = Ink.copy(alpha = 0.55f),
                     fontSize = 12.sp,
                 )
+            }
+        }
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .shadow(24.dp, RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+                .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+                .background(Color(0xFFD9D3CC)),
+        ) {
+            PhotoImage(photo, Modifier.fillMaxSize())
+            if (featured) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.48f))
+                        .clickable(onClick = onOpen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    LensGlyph()
+                }
             }
         }
     }
