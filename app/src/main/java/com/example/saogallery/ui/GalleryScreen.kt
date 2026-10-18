@@ -1112,8 +1112,8 @@ private fun PortraitWindow(
         Box(
             Modifier
                 .fillMaxSize()
-                .shadow(24.dp, RoundedCornerShape(12.dp))
-                .clip(RoundedCornerShape(12.dp))
+                .shadow(24.dp, RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
+                .clip(RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp))
                 .background(Color(0xFFD9D3CC)),
         ) {
             PhotoImage(photo, Modifier.fillMaxSize())
@@ -1135,10 +1135,10 @@ private fun PortraitWindow(
         Row(
             Modifier
                 .align(Alignment.TopCenter)
-                .offset(y = (-40).dp)
+                .offset(y = (-34).dp)
                 .fillMaxWidth()
                 .height(34.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
                 .background(Paper)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,

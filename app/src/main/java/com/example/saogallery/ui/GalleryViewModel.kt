@@ -138,12 +138,10 @@ class GalleryViewModel(app: Application) : AndroidViewModel(app) {
         if (count == 0) return
         val step = 360f / count
         val delta = rotation.value - dragOrigin
-        val nudged = abs(delta) > step * 0.28f
-        val flicked = abs(delta) > step * 0.12f && abs(velocityPx) > 900f
-        val steps = when {
-            nudged -> if (delta > 0f) 1 else -1
-            flicked -> if (velocityPx < 0f) 1 else -1
-            else -> 0
+        val steps = if (abs(delta) > step * 0.5f) {
+            if (delta > 0f) 1 else -1
+        } else {
+            0
         }
         animateTo(dragOrigin + steps * step)
     }
